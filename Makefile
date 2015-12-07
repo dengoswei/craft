@@ -23,7 +23,7 @@ GRPC_CPP_PLUGIN_PATH ?= `which $(GRPC_CPP_PLUGIN)`
 all: $(TESTS)
 
 clean :
-	rm -f $(TESTS) *.o craftpb/*.o craftpb/raft.pb.* test/*.o
+	rm -f $(TESTS) *.o craftpb/*.o craftpb/raft.pb.* test/*.o libcraft.a
 
 libcraft.a: raft_impl.o craftpb/raft.pb.o 
 	$(ARSTATICLIB)
