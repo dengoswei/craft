@@ -19,10 +19,10 @@ enum EntryType {
 }
 
 message Entry {
-	optional EntryType  Type  = 1;
-	optional uint64     Term  = 2;
-	optional uint64     Index = 3;
-	optional bytes      Data  = 4;
+	optional EntryType  type  = 1;
+	optional uint64     term  = 2;
+	optional uint64     index = 3;
+	optional bytes      data  = 4;
 }
 
 message SnapshotMetadata {

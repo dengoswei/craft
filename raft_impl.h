@@ -1,13 +1,15 @@
 #pragma once
 
 #include <chrono>
+#include <set>
 #include <map>
-#include <queue>
+#include <deque>
 #include <memory>
 #include <functional>
 #include <stdint.h>
 #include "utils.h"
 #include "raft.pb.h"
+#include "gsl.h"
 
 
 namespace raft {
@@ -33,23 +35,43 @@ private:
         std::function<MessageType(RaftImpl&, const Message&)>;
 
 public:
-    RaftImpl(uint64_t logid, 
-            uint64_t selfid, uint64_t group_size, int election_timeout);
+    RaftImpl(uint64_t logid, uint64_t selfid, 
+            std::set<uint64_t> peer_ids, int election_timeout);
 
     ~RaftImpl();
 
-    // error, meta store_seq
     MessageType CheckTerm(uint64_t msg_term);
 
-    // error, meta store_seq, rsp_msg_type
     MessageType CheckTimout(
             std::chrono::time_point<std::chrono::system_clock> time_now);
 
-
     MessageType step(const Message& msg);
 
-    std::unique_ptr<Message> produceRsp(
-            const Message& req_msg, MessageType rsp_msg_type);
+    std::vector<std::unique_ptr<Message>> 
+        produceRsp(const Message& req_msg, MessageType rsp_msg_type);
+
+    std::unique_ptr<Message> buildMsgApp(
+            uint64_t peer_id, uint64_t next_index, size_t max_batch_size);
+
+    std::vector<std::unique_ptr<Message>> 
+        batchBuildMsgAppUpToDate(size_t max_batch_size);
+
+    std::vector<std::unique_ptr<Message>> 
+        batchBuildMsgApp(size_t max_batch_size);
+
+    bool isUpToDate(
+            uint64_t peer_log_term, uint64_t peer_max_index);
+
+    void appendLogs(gsl::array_view<const Entry> entries);
+    void appendEntries(
+            uint64_t prev_log_index, 
+            uint64_t prev_log_term, 
+            uint64_t leader_commited_index, 
+            gsl::array_view<const Entry> entries);
+
+    int checkAndAppendEntries(
+            uint64_t prev_log_index, 
+            gsl::array_view<const Entry> entries);
 
 public:
     uint64_t getSelfId() const {
@@ -84,15 +106,31 @@ public:
     void updateActiveTime(
             std::chrono::time_point<std::chrono::system_clock> time_now);
 
-    bool isUpToDate(
-            uint64_t peer_log_term, uint64_t peer_max_index);
-
     uint64_t getLastLogTerm() const;
     uint64_t getLastLogIndex() const;
 
+    uint64_t getBaseLogTerm() const;
+    uint64_t getBaseLogIndex() const;
+
+    uint64_t getLogTerm(uint64_t log_index) const;
+
     void beginVote();
     void updateVote(uint64_t peer_id, bool current_rsp);
-    bool isMajorVoteYes();
+    bool isMajorVoteYes() const;
+
+    void updateCommitedIndex(uint64_t leader_commited_index);
+    void updateTruncateIndex(uint64_t new_truncate_index);
+    bool isMatch(uint64_t log_index, uint64_t log_term) const;
+
+    uint64_t findConflict(gsl::array_view<const Entry> entries) const;
+    
+    void updatePeerReplicateState(
+            uint64_t peer_id, 
+            bool reject, uint64_t reject_hint, uint64_t peer_next_index);
+
+    void becomeFollower();
+    void becomeCandidate();
+    void becomeLeader();
 
 private:
     RaftRole role_ = RaftRole::FOLLOWER;
@@ -101,14 +139,15 @@ private:
 
     uint64_t logid_ = 0;
     uint64_t selfid_ = 0;
-    uint64_t group_size_ = 0;
+    std::set<uint64_t> peer_ids_;
 
     uint64_t term_ = 0;
     uint64_t vote_for_ = 0;
     uint64_t commited_index_ = 0;
-    uint64_t max_index_ = 0;
 
-    std::queue<std::unique_ptr<Entry>> logs_;
+    uint64_t truncate_index_ = 0;
+
+    std::deque<std::unique_ptr<Entry>> logs_;
 
     uint64_t store_seq_ = 0;
     std::map<uint64_t, uint64_t> pending_store_;
@@ -116,7 +155,12 @@ private:
     std::chrono::milliseconds election_timeout_;
     std::chrono::time_point<std::chrono::system_clock> active_time_;
 
+    // status of peers
+    // # candidcate #
     std::map<uint64_t, bool> vote_resps_;
+    // # leader #
+    std::map<uint64_t, uint64_t> next_indexes_;
+    std::map<uint64_t, uint64_t> match_indexes_;
 };
 
 
