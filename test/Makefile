@@ -55,11 +55,11 @@ gtest_main.a : gtest-all.o gtest_main.o
 utils_test: utils_test.o
 	$(BUILDEXE)
 
-leader_election_test: leader_election_test.o \
+leader_election_test: leader_election_test.o test_helper.o\
 	../raft_impl.o ../craftpb/raft.pb.o gtest_main.a
 	$(BUILDEXE)
 
-%.pb.cc: ../craftpb/%.proto
+%.pb.cc: %.proto
 	$(PROTOC) -I $(PROTOS_PATH) --cpp_out=../craftpb/ $<
 
 

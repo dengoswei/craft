@@ -59,6 +59,11 @@ public:
     std::vector<std::unique_ptr<Message>> 
         batchBuildMsgApp(size_t max_batch_size);
 
+    std::unique_ptr<Message> 
+        buildMsgHeartbeat(uint64_t peer_id, uint64_t next_index) const;
+
+    std::vector<std::unique_ptr<Message>> batchBuildMsgHeartbeat();
+
     bool isUpToDate(
             uint64_t peer_log_term, uint64_t peer_max_index);
 
@@ -96,6 +101,12 @@ public:
 
     void setVoteFor(bool reset, uint64_t candidate);
 
+    uint64_t getLeader() const {
+        return leader_id_;
+    }
+
+    void setLeader(bool reset, uint64_t leader_id);
+
     uint64_t pendingStoreSeq(uint64_t index) const;
     uint64_t assignStoreSeq(uint64_t index);
 
@@ -113,18 +124,18 @@ public:
     uint64_t getBaseLogIndex() const;
 
     uint64_t getLogTerm(uint64_t log_index) const;
+    bool isIndexInMem(uint64_t log_index) const;
 
     void beginVote();
     void updateVote(uint64_t peer_id, bool current_rsp);
     bool isMajorVoteYes() const;
 
     void updateCommitedIndex(uint64_t leader_commited_index);
-    void updateTruncateIndex(uint64_t new_truncate_index);
     bool isMatch(uint64_t log_index, uint64_t log_term) const;
 
     uint64_t findConflict(gsl::array_view<const Entry> entries) const;
     
-    void updatePeerReplicateState(
+    bool updatePeerReplicateState(
             uint64_t peer_id, 
             bool reject, uint64_t reject_hint, uint64_t peer_next_index);
 
@@ -145,7 +156,7 @@ private:
     uint64_t vote_for_ = 0;
     uint64_t commited_index_ = 0;
 
-    uint64_t truncate_index_ = 0;
+    uint64_t leader_id_ = 0;
 
     std::deque<std::unique_ptr<Entry>> logs_;
 
@@ -158,9 +169,14 @@ private:
     // status of peers
     // # candidcate #
     std::map<uint64_t, bool> vote_resps_;
+
     // # leader #
     std::map<uint64_t, uint64_t> next_indexes_;
     std::map<uint64_t, uint64_t> match_indexes_;
+    // TODO:
+    // trace peer_ids need log entries not in mem
+    std::set<uint64_t> ids_not_in_mem_;
+    // std::map<uint64_t, uint64_t> probe_indexes_; // last reject index
 };
 
 
