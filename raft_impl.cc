@@ -39,6 +39,21 @@ std::tuple<int, int> countVotes(const std::map<uint64_t, bool>& votes)
     return make_tuple(true_cnt, false_cnt);
 }
 
+bool hasReplicateOnMajority(
+        uint64_t new_match_index, 
+        const std::map<uint64_t, uint64_t>& match_indexes)
+{
+    auto major_count = 0;
+    for (const auto& id_match_idx : match_indexes) {
+        if (id_match_idx.second >= new_match_index) {
+            ++major_count;
+        }
+    }
+
+    // major_count + 1 >= (match_indexes.size() / 2 + 1)
+    return major_count >= (match_indexes.size() / 2);
+}
+
 gsl::array_view<const Entry> make_entries(const raft::Message& msg)
 {
     return gsl::array_view<const Entry>{
@@ -172,7 +187,8 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
 
             rsp_msg_type = MessageType::MsgHeartbeatResp;
             raft_impl.updateActiveTime(time_now);
-            logdebug("selfid %" PRIu64 " recv heartbeat from leader %" PRIu64, 
+            logdebug("selfid %" PRIu64 
+                    " recv heartbeat from leader %" PRIu64, 
                     raft_impl.getSelfId(), msg.from());
         }
             break;
@@ -190,8 +206,12 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
             raft_impl.appendEntries(
                     msg.index(), msg.log_term(), msg.commit(), entries);
 
-            rsp_msg_type = MessageType::MsgAppResp;
             raft_impl.updateActiveTime(time_now);
+
+            if (0 != msg.entries_size()) { 
+                rsp_msg_type = MessageType::MsgAppResp;
+            }
+            // 0 == msg.entries_size() => indicate already up-to-date
         }
             break;
 
@@ -283,29 +303,39 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
         case MessageType::MsgProp:
         {
             // client prop
-
             auto entries = make_entries(msg);
             assert(static_cast<size_t>(
                         msg.entries_size()) == entries.length());
 
-            assert(0 == raft_impl.checkAndAppendEntries(msg.index(), entries));
+            assert(0 == 
+                    raft_impl.checkAndAppendEntries(msg.index(), entries));
             rsp_msg_type = MessageType::MsgApp;
         }
             break;
 
         case MessageType::MsgAppResp:
+        {
             // collect appendEntry resp
-
-            raft_impl.updatePeerReplicateState(
+            // TODO: update commited!
+            bool update = raft_impl.updateReplicateState(
                     msg.from(), msg.reject(), msg.reject_hint(), msg.index());
-            rsp_msg_type = MessageType::MsgApp;
+            if (update) {
+                rsp_msg_type = MessageType::MsgApp;
+            }
+
+            logdebug("selfid(leader) %" PRIu64 " MsgAppResp msg.from %" PRIu64
+                    " msg.index %" PRIu64 " reject %d rsp_msg_type %d", 
+                    raft_impl.getSelfId(), msg.from(), msg.index(), 
+                    static_cast<int>(msg.reject()), 
+                    static_cast<int>(rsp_msg_type));
+        }
             break;
 
         case MessageType::MsgHeartbeatResp:
         {
             // collect heartbeat resp
 
-            bool update = raft_impl.updatePeerReplicateState(
+            bool update = raft_impl.updateReplicateState(
                     msg.from(), msg.reject(), msg.reject_hint(), msg.index());
             if (true == update) {
                 rsp_msg_type = MessageType::MsgHeartbeat;
@@ -448,7 +478,8 @@ RaftImpl::produceRsp(
 
         logdebug("MsgVote term %" PRIu64 " candidate %" PRIu64 
                 " lastLogIndex %" PRIu64 " lastLogTerm %" PRIu64, 
-                term_, selfid_, msg_template.index(), msg_template.log_term());
+                term_, selfid_, msg_template.index(), 
+                msg_template.log_term());
         break;
 
     case MessageType::MsgVoteResp:
@@ -492,6 +523,9 @@ RaftImpl::produceRsp(
                 assert(size_t{1} == vec_msg.size());
             }
             assert(nullptr == rsp_msg);
+            logdebug("MsgApp selfid %" PRIu64 " req_msg.from %" PRIu64 
+                    " req_msg.index %" PRIu64 " vec_msg.size %zu", 
+                    selfid_, req_msg.from(), req_msg.index(), vec_msg.size());
         }
     }
         break;
@@ -513,9 +547,11 @@ RaftImpl::produceRsp(
         // TODO: reject hint ?
         rsp_msg->set_reject(!isMatch(req_msg.index(), req_msg.log_term()));
         if (false == rsp_msg->reject()) {
+            // set index to next_index
             if (0 < req_msg.entries_size()) {
                 rsp_msg->set_index(
-                        req_msg.entries(req_msg.entries_size() - 1).index());
+                        req_msg.entries(
+                            req_msg.entries_size() - 1).index() + 1ull);
             }
             else {
                 rsp_msg->set_index(req_msg.index() + 1ull);
@@ -592,7 +628,7 @@ RaftImpl::produceRsp(
 
 std::unique_ptr<Message>
 RaftImpl::buildMsgApp(
-        uint64_t peer_id, uint64_t next_index, size_t max_batch_size)
+        uint64_t peer_id, uint64_t index, size_t max_batch_size)
 {
     // raft paper
     // AppendEntries RPC Arguments:
@@ -603,17 +639,7 @@ RaftImpl::buildMsgApp(
     // - entries[]
     // - leaderCommit
     assert(size_t{0} < max_batch_size);
-    uint64_t base_index = getBaseLogIndex();
-    uint64_t last_index = getLastLogIndex();
-    if (next_index < base_index || next_index > last_index) {
-        if (next_index < base_index) {
-            // report: not in mem
-            ids_not_in_mem_.insert(peer_id);
-        }
-        return nullptr;
-    }
-
-    assert(0ull < next_index);
+    assert(0ull < index);
     auto app_msg = make_unique<Message>();
     assert(nullptr != app_msg);
 
@@ -622,18 +648,35 @@ RaftImpl::buildMsgApp(
     app_msg->set_term(term_);
     app_msg->set_from(selfid_);
     app_msg->set_to(peer_id);
-    app_msg->set_index(next_index - 1ull);
-    app_msg->set_log_term(getLogTerm(next_index - 1ull));
     app_msg->set_commit(commited_index_);
-    assert(size_t{0} <= last_index - next_index + 1ull);
+
+    uint64_t base_index = getBaseLogIndex();
+    uint64_t last_index = getLastLogIndex();
+    if (index < base_index || index > last_index) {
+        if (index < base_index) {
+            // report: not in mem
+            ids_not_in_mem_.insert(peer_id);
+            return nullptr;
+        }
+
+        app_msg->set_index(0ull); // only case
+        app_msg->set_log_term(getLogTerm(0ull)); // 0ull
+        return app_msg;
+    }
+
+    assert(size_t{0} <= last_index - index + 1ull);
+    app_msg->set_index(index - 1ull);
+    app_msg->set_log_term(getLogTerm(index - 1ull));
+    app_msg->set_commit(commited_index_);
+    assert(size_t{0} <= last_index - index + 1ull);
     
     max_batch_size = min<size_t>(
-            max_batch_size, last_index - next_index + 1ull);
+            max_batch_size, last_index - index + 1ull);
     for (auto i = size_t{0}; i < max_batch_size; ++i) {
         auto entry = app_msg->add_entries();
         assert(nullptr != entry);
 
-        *entry = *logs_[next_index + i - base_index];
+        *entry = *logs_[index + i - base_index];
     }
 
     assert(max_batch_size == static_cast<size_t>(app_msg->entries_size()));
@@ -816,7 +859,7 @@ void RaftImpl::appendEntries(
     auto new_entries = shrinkEntries(conflict_index, entries);
     appendLogs(new_entries);
 
-    updateCommitedIndex(leader_commited_index);
+    updateFollowerCommitedIndex(leader_commited_index);
     return ;
 }
 
@@ -961,23 +1004,23 @@ uint64_t RaftImpl::getBaseLogIndex() const
 
     assert(nullptr != logs_.front());
     assert(0ull < logs_.front()->index());
-    assert(commited_index_ >= logs_.front()->index());
+    assert(0ull == commited_index_ ||
+            commited_index_ >= logs_.front()->index());
     return logs_.front()->index();
 }
 
 uint64_t RaftImpl::getLogTerm(uint64_t log_index) const
 {
-    assert(0ull < log_index);
-    const uint64_t base_index = getBaseLogIndex();
-    const uint64_t last_index = getLastLogIndex();
-    if (log_index < base_index ||
-            log_index > last_index) {
-        return 0ull;
+    if (0ull == log_index) {
+        return 0ull; // 0ull <-> 0ull;
     }
 
+    assert(0ull < log_index);
     assert(false == logs_.empty());
-    assert(base_index <= log_index);
-    assert(last_index >= log_index);
+    const uint64_t base_index = getBaseLogIndex();
+    const uint64_t last_index = getLastLogIndex();
+    assert(log_index >= base_index);
+    assert(log_index <= last_index);
 
     size_t idx = log_index - base_index;
     assert(0 <= idx && idx < logs_.size());
@@ -1067,7 +1110,17 @@ bool RaftImpl::isMatch(uint64_t log_index, uint64_t log_term) const
     return false;
 }
 
-void RaftImpl::updateCommitedIndex(uint64_t leader_commited_index)
+void RaftImpl::updateLeaderCommitedIndex(uint64_t new_commited_index)
+{
+    assert_role(*this, RaftRole::LEADER);
+    assert(commited_index_ < new_commited_index);
+    logdebug("selfid(leader) %" PRIu64 " commited_index_ %" PRIu64
+            " new_commited_index %" PRIu64, 
+            selfid_, commited_index_, new_commited_index);
+    commited_index_ = new_commited_index;
+}
+
+void RaftImpl::updateFollowerCommitedIndex(uint64_t leader_commited_index)
 {
     assert_role(*this, RaftRole::FOLLOWER);
     assert(commited_index_ <= leader_commited_index);
@@ -1099,7 +1152,7 @@ uint64_t RaftImpl::findConflict(gsl::array_view<const Entry> entries) const
     return entries[entries.length() -1].index() + 1ull;
 }
 
-bool RaftImpl::updatePeerReplicateState(
+bool RaftImpl::updateReplicateState(
         uint64_t peer_id, 
         bool reject, uint64_t /* reject_hint */, uint64_t peer_next_index)
 {
@@ -1129,8 +1182,18 @@ bool RaftImpl::updatePeerReplicateState(
     }
 
     assert(0ull < peer_next_index);
-    assert(match_indexes_[peer_id] > peer_next_index - 1);
-    match_indexes_[peer_id] = peer_next_index - 1;
+
+    const auto new_match_index = peer_next_index - 1ull;
+    assert(match_indexes_[peer_id] < new_match_index);
+    match_indexes_[peer_id] = new_match_index;
+
+    if (getTerm() == getLogTerm(new_match_index) && 
+            new_match_index > getCommitedIndex()) {
+        // update commited_index_
+        if (hasReplicateOnMajority(new_match_index, match_indexes_)) {
+            updateLeaderCommitedIndex(new_match_index);
+        }
+    }
 
     next_indexes_[peer_id] = max(next_indexes_[peer_id], peer_next_index);
     return true;

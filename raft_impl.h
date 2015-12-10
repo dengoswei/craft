@@ -79,6 +79,11 @@ public:
             gsl::array_view<const Entry> entries);
 
 public:
+
+    uint64_t getLogId() const {
+        return logid_;
+    }
+
     uint64_t getSelfId() const {
         return selfid_;
     }
@@ -94,6 +99,10 @@ public:
     }
 
     void setTerm(uint64_t new_term);
+
+    uint64_t getCommitedIndex() const {
+        return commited_index_;
+    }
 
     uint64_t getVoteFor() const {
         return vote_for_;
@@ -130,12 +139,13 @@ public:
     void updateVote(uint64_t peer_id, bool current_rsp);
     bool isMajorVoteYes() const;
 
-    void updateCommitedIndex(uint64_t leader_commited_index);
+    void updateLeaderCommitedIndex(uint64_t new_commited_index);
+    void updateFollowerCommitedIndex(uint64_t leader_commited_index);
     bool isMatch(uint64_t log_index, uint64_t log_term) const;
 
     uint64_t findConflict(gsl::array_view<const Entry> entries) const;
     
-    bool updatePeerReplicateState(
+    bool updateReplicateState(
             uint64_t peer_id, 
             bool reject, uint64_t reject_hint, uint64_t peer_next_index);
 

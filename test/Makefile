@@ -4,7 +4,7 @@ CXXFLAGS += -g -Wall -Wextra -D TEST_DEBUG
 
 
 
-TESTS = utils_test leader_election_test
+TESTS = utils_test leader_election_test append_entries_test
 
 INCLS += -I../ -I../craftpb 
 INCLS += -I/Users/dengoswei/open-src/github.com/microsoft/GSL/include
@@ -58,6 +58,11 @@ utils_test: utils_test.o
 leader_election_test: leader_election_test.o test_helper.o\
 	../raft_impl.o ../craftpb/raft.pb.o gtest_main.a
 	$(BUILDEXE)
+
+append_entries_test: append_entries_test.o test_helper.o\
+	../raft_impl.o ../craftpb/raft.pb.o gtest_main.a
+	$(BUILDEXE)
+
 
 %.pb.cc: %.proto
 	$(PROTOC) -I $(PROTOS_PATH) --cpp_out=../craftpb/ $<
