@@ -132,6 +132,9 @@ public:
     uint64_t getBaseLogTerm() const;
     uint64_t getBaseLogIndex() const;
 
+    std::tuple<uint64_t, uint64_t> getInMemIndex() const;
+
+    const Entry* getLogEntry(uint64_t log_index) const;
     uint64_t getLogTerm(uint64_t log_index) const;
     bool isIndexInMem(uint64_t log_index) const;
 

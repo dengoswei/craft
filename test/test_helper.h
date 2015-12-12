@@ -41,4 +41,24 @@ void init_leader(
         std::map<uint64_t, std::unique_ptr<raft::RaftImpl>>& map_raft);
 
 
+std::tuple<
+    uint64_t,
+    std::set<uint64_t>, 
+    std::map<uint64_t, std::unique_ptr<raft::RaftImpl>>>
+comm_init(uint64_t leader_id, 
+        int min_election_timeout, int max_election_timeout);
+
+
+std::unique_ptr<raft::Message> buildMsgProp(
+        uint64_t logid, uint64_t leader_id, 
+        uint64_t term, uint64_t prev_index, int entries_size);
+
+
+std::vector<std::unique_ptr<raft::Message>>
+batchBuildMsgProp(
+        uint64_t logid, uint64_t leader_id, 
+        uint64_t term, uint64_t prev_index, 
+        int batch_size, int entries_size);
+
+
 } // namespace test

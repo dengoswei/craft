@@ -617,6 +617,16 @@ RaftImpl::produceRsp(
         // DO NOTHING ?
         break;
 
+    case MessageType::MsgInvalidTerm:
+        
+        logdebug("MsgInvalidTerm selfid %" PRIu64 
+                " role %d term_ %" PRIu64 " msg.from %" PRIu64 
+                " msg.term %" PRIu64, 
+                getSelfId(), static_cast<int>(getRole()), 
+                getTerm(), req_msg.from(), req_msg.term());
+        // TODO: rsp with ?
+        break;
+
     default:
         hassert(false, "invalid rsp_msg_type %d", 
                 static_cast<int>(rsp_msg_type));
@@ -883,16 +893,15 @@ int RaftImpl::checkAndAppendEntries(
         logs_.back()->set_index(last_index + 1 + idx);
     }
 
-    // store !
-
+    // TODO: find a way to store logs_ to disk
     return 0;
 }
 
 
 void RaftImpl::setRole(RaftRole new_role)
 {
-    logdebug("change role_ %d new_role %d", 
-            static_cast<int>(role_), static_cast<int>(new_role));
+    logdebug("selfid %" PRIu64 " change role_ %d new_role %d", 
+            selfid_, static_cast<int>(role_), static_cast<int>(new_role));
     role_ = new_role;
     switch (role_) {
         case RaftRole::FOLLOWER:
@@ -914,8 +923,10 @@ void RaftImpl::setRole(RaftRole new_role)
 
 void RaftImpl::setTerm(uint64_t new_term)
 {
-    logdebug("change current term %" PRIu64 " new_term %" PRIu64, 
-            term_, new_term);
+    logdebug("selfid %" PRIu64 " role %d change current term %" PRIu64 
+            " new_term %" PRIu64, 
+            selfid_, static_cast<int>(role_), term_, new_term);
+    assert(term_ < new_term);
     term_ = new_term;
     return ;
 }
@@ -959,15 +970,8 @@ void RaftImpl::updateActiveTime(
 
 uint64_t RaftImpl::getLastLogIndex() const 
 {
-    uint64_t base_index = getBaseLogIndex();
-    if (0ull == base_index) {
-        assert(true == logs_.empty());
-        return base_index;
-    }
-
-    assert(nullptr != logs_.back());
-    assert(base_index + logs_.size() - 1ull == logs_.back()->index());
-    return logs_.back()->index();
+    auto t = getInMemIndex();
+    return get<1>(t);
 }
 
 uint64_t RaftImpl::getLastLogTerm() const 
@@ -995,39 +999,62 @@ uint64_t RaftImpl::getBaseLogTerm() const
     return logs_.front()->term();
 }
 
-uint64_t RaftImpl::getBaseLogIndex() const 
+std::tuple<uint64_t, uint64_t> RaftImpl::getInMemIndex() const 
 {
     if (true == logs_.empty()) {
         assert(0ull == commited_index_);
-        return 0ull;
+        return make_tuple(0ull, 0ull);
     }
 
     assert(nullptr != logs_.front());
     assert(0ull < logs_.front()->index());
     assert(0ull == commited_index_ ||
             commited_index_ >= logs_.front()->index());
-    return logs_.front()->index();
+    assert(nullptr != logs_.back());
+    assert(logs_.back()->index() == 
+            logs_.front()->index() + logs_.size() - 1ull);
+    
+    return make_tuple(logs_.front()->index(), logs_.back()->index());
 }
 
-uint64_t RaftImpl::getLogTerm(uint64_t log_index) const
+uint64_t RaftImpl::getBaseLogIndex() const 
+{
+    auto t = getInMemIndex();
+    return get<0>(t);
+}
+
+
+const Entry* RaftImpl::getLogEntry(uint64_t log_index) const 
 {
     if (0ull == log_index) {
-        return 0ull; // 0ull <-> 0ull;
+        return nullptr;
     }
 
     assert(0ull < log_index);
     assert(false == logs_.empty());
-    const uint64_t base_index = getBaseLogIndex();
-    const uint64_t last_index = getLastLogIndex();
-    assert(log_index >= base_index);
-    assert(log_index <= last_index);
+    auto base_index = 0ull;
+    auto last_index = 0ull;
+    tie(base_index, last_index) = getInMemIndex();
+    if (log_index < base_index || log_index > last_index) {
+        return nullptr;
+    }
 
     size_t idx = log_index - base_index;
     assert(0 <= idx && idx < logs_.size());
     assert(nullptr != logs_[idx]);
     assert(log_index == logs_[idx]->index());
     assert(0 < logs_[idx]->term());
-    return logs_[idx]->term();
+    return logs_[idx].get();
+}
+
+uint64_t RaftImpl::getLogTerm(uint64_t log_index) const
+{
+    const auto entry = getLogEntry(log_index);
+    if (nullptr == entry) {
+        return 0ull;
+    }
+
+    return entry->term();
 }
 
 bool RaftImpl::isIndexInMem(uint64_t log_index) const 

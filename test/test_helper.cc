@@ -118,6 +118,77 @@ void init_leader(
     }
 }
 
+std::tuple<
+    uint64_t,
+    std::set<uint64_t>, 
+    std::map<uint64_t, std::unique_ptr<raft::RaftImpl>>>
+comm_init(uint64_t leader_id, 
+        int min_election_timeout, int max_election_timeout)
+{
+    auto map_raft = build_rafts(
+            GROUP_IDS, LOGID, min_election_timeout, max_election_timeout);
+    assert(map_raft.size() == GROUP_IDS.size());
+    assert(map_raft.end() != map_raft.find(leader_id));
+
+    init_leader(LOGID, leader_id, map_raft);
+    return make_tuple(LOGID, GROUP_IDS, move(map_raft));
+}
+
+std::unique_ptr<raft::Message> 
+buildMsgProp(
+        uint64_t logid, uint64_t leader_id, 
+        uint64_t term, uint64_t prev_index, int entries_size)
+{ 
+    assert(0ull < leader_id);
+    assert(0ull < term);
+    assert(0ull <= prev_index);
+    assert(0 < entries_size);
+    auto prop_msg = make_unique<Message>();
+    assert(nullptr != prop_msg);
+
+    prop_msg->set_logid(logid);
+    prop_msg->set_type(MessageType::MsgProp);
+    prop_msg->set_to(leader_id);
+    prop_msg->set_term(term);
+    prop_msg->set_index(prev_index);
+
+    RandomStrGen<100, 200> str_gen;
+    for (auto i = 0; i < entries_size; ++i) {
+        auto entry = prop_msg->add_entries();
+        assert(nullptr != entry);
+
+        entry->set_type(EntryType::EntryNormal);
+        entry->set_data(str_gen.Next());
+    }
+
+    return prop_msg;
+}
+
+std::vector<std::unique_ptr<raft::Message>>
+batchBuildMsgProp(
+        uint64_t logid, uint64_t leader_id, 
+        uint64_t term, uint64_t prev_index, 
+        int batch_size, int entries_size)
+{
+    assert(0 < batch_size);
+    assert(0 < entries_size);
+    vector<unique_ptr<Message>> vec_msg;
+    vec_msg.reserve(batch_size);
+    for (auto iter_time = 0; iter_time < batch_size; ++iter_time) {
+        auto prop_msg = buildMsgProp(
+                logid, leader_id, term, prev_index, entries_size);    
+        assert(nullptr != prop_msg);
+        assert(prev_index == prop_msg->index());
+        assert(entries_size == prop_msg->entries_size());
+        prev_index += entries_size;
+        vec_msg.emplace_back(move(prop_msg));
+    }
+
+    assert(vec_msg.size() == static_cast<size_t>(batch_size));
+    return vec_msg;
+}
+
+
 
 
 } // namespace test
