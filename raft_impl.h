@@ -67,16 +67,16 @@ public:
     bool isUpToDate(
             uint64_t peer_log_term, uint64_t peer_max_index);
 
-    void appendLogs(gsl::array_view<const Entry> entries);
+    void appendLogs(gsl::array_view<const Entry*> entries);
     void appendEntries(
             uint64_t prev_log_index, 
             uint64_t prev_log_term, 
             uint64_t leader_commited_index, 
-            gsl::array_view<const Entry> entries);
+            gsl::array_view<const Entry*> entries);
 
     int checkAndAppendEntries(
             uint64_t prev_log_index, 
-            gsl::array_view<const Entry> entries);
+            gsl::array_view<const Entry*> entries);
 
 public:
 
@@ -146,7 +146,7 @@ public:
     void updateFollowerCommitedIndex(uint64_t leader_commited_index);
     bool isMatch(uint64_t log_index, uint64_t log_term) const;
 
-    uint64_t findConflict(gsl::array_view<const Entry> entries) const;
+    uint64_t findConflict(gsl::array_view<const Entry*> entries) const;
     
     bool updateReplicateState(
             uint64_t peer_id, 

@@ -54,27 +54,41 @@ bool hasReplicateOnMajority(
     return major_count >= (match_indexes.size() / 2);
 }
 
-gsl::array_view<const Entry> make_entries(const raft::Message& msg)
+std::vector<const Entry*> make_vec_entries(const raft::Message& msg)
 {
-    return gsl::array_view<const Entry>{
-        0 == msg.entries_size() ? nullptr : &msg.entries(0), 
-        static_cast<size_t>(msg.entries_size())
+    vector<const Entry*> vec_entries(msg.entries_size(), nullptr);
+    for (int idx = 0; idx < msg.entries_size(); ++idx) {
+        vec_entries[idx] = &msg.entries(idx);
+        assert(nullptr != vec_entries[idx]);
+    }
+
+    assert(vec_entries.size() == static_cast<size_t>(msg.entries_size()));
+    return vec_entries;
+}
+
+gsl::array_view<const Entry*> 
+make_entries(std::vector<const Entry*>& vec_entries)
+{
+    return gsl::array_view<const Entry*>{
+        true == vec_entries.empty() ? nullptr : &vec_entries[0], 
+        vec_entries.size()
     };
 }
 
-gsl::array_view<const Entry> 
-shrinkEntries(uint64_t conflict_index, gsl::array_view<const Entry> entries)
+gsl::array_view<const Entry*> 
+shrinkEntries(uint64_t conflict_index, gsl::array_view<const Entry*> entries)
 {
     if (size_t(0) == entries.length() || 0ull == conflict_index) {
         return entries;
     }
 
     assert(size_t(0) < entries.length());
-    uint64_t base_index = entries[0].index();
+    assert(nullptr != entries[0]);
+    uint64_t base_index = entries[0]->index();
     assert(conflict_index >= base_index);
     size_t idx = conflict_index - base_index;
     if (idx >= entries.length()) {
-        return gsl::array_view<const Entry>{nullptr};
+        return gsl::array_view<const Entry*>{nullptr};
     }
 
     return entries.sub(idx);
@@ -130,6 +144,8 @@ MessageType onTimeout(
             std::chrono::time_point<std::chrono::system_clock> time_now)
 {
     assert_role(raft_impl, RaftRole::FOLLOWER);
+    logdebug("selfid %" PRIu64 " term %" PRIu64, 
+            raft_impl.getSelfId(), raft_impl.getTerm());
     // raft paper: 
     // Followers 5.2
     // if election timeout elapses without receiving AppendEntries
@@ -199,7 +215,8 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
             raft_impl.setLeader(false, msg.from());
             assert(msg.from() == raft_impl.getLeader());
 
-            auto entries = make_entries(msg);
+            auto vec_entries = make_vec_entries(msg);
+            auto entries = make_entries(vec_entries);
             assert(static_cast<size_t>(
                         msg.entries_size()) == entries.length());
 
@@ -236,6 +253,8 @@ MessageType onTimeout(
         std::chrono::time_point<std::chrono::system_clock> time_now)
 {
     assert_role(raft_impl, RaftRole::CANDIDATE);
+    logdebug("selfid %" PRIu64 " term %" PRIu64, 
+            raft_impl.getSelfId(), raft_impl.getTerm());
 
     // raft paper:
     // Candidates 5.2
@@ -303,7 +322,8 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
         case MessageType::MsgProp:
         {
             // client prop
-            auto entries = make_entries(msg);
+            auto vec_entries = make_vec_entries(msg);
+            auto entries = make_entries(vec_entries);
             assert(static_cast<size_t>(
                         msg.entries_size()) == entries.length());
 
@@ -826,19 +846,21 @@ bool RaftImpl::isUpToDate(
     return false;
 }
 
-void RaftImpl::appendLogs(gsl::array_view<const Entry> entries)
+void RaftImpl::appendLogs(gsl::array_view<const Entry*> entries)
 {
     if (size_t(0) == entries.length()) {
         return ; // do nothing;
     }
 
-    uint64_t base_index = entries[0].index();
+    assert(nullptr != entries[0]);
+    uint64_t base_index = entries[0]->index();
     truncateLogs(logs_, base_index);
 
     uint64_t last_index = getLastLogIndex();
     assert(last_index + 1 == base_index);
     for (size_t idx = 0; idx < entries.length(); ++idx) {
-        logs_.emplace_back(make_unique<Entry>(entries[idx]));
+        assert(nullptr != entries[idx]);
+        logs_.emplace_back(make_unique<Entry>(*entries[idx]));
         assert(nullptr != logs_.back());
     }
 
@@ -849,7 +871,7 @@ void RaftImpl::appendEntries(
         uint64_t prev_log_index, 
         uint64_t prev_log_term, 
         uint64_t leader_commited_index, 
-        gsl::array_view<const Entry> entries)
+        gsl::array_view<const Entry*> entries)
 {
     assert_role(*this, RaftRole::FOLLOWER);
     assert(leader_commited_index >= commited_index_);
@@ -875,7 +897,7 @@ void RaftImpl::appendEntries(
 
 int RaftImpl::checkAndAppendEntries(
         uint64_t prev_log_index, 
-        gsl::array_view<const Entry> entries)
+        gsl::array_view<const Entry*> entries)
 {
     assert_role(*this, RaftRole::LEADER);
     
@@ -886,8 +908,9 @@ int RaftImpl::checkAndAppendEntries(
 
     // max length control ?
     for (size_t idx = 0; idx < entries.length(); ++idx) {
+        assert(nullptr != entries[idx]);
         logs_.emplace_back(
-                make_unique<Entry>(entries[idx]));
+                make_unique<Entry>(*entries[idx]));
         assert(nullptr != logs_.back());
         logs_.back()->set_term(term_);
         logs_.back()->set_index(last_index + 1 + idx);
@@ -1162,7 +1185,7 @@ void RaftImpl::updateFollowerCommitedIndex(uint64_t leader_commited_index)
     return ;
 }
 
-uint64_t RaftImpl::findConflict(gsl::array_view<const Entry> entries) const
+uint64_t RaftImpl::findConflict(gsl::array_view<const Entry*> entries) const
 {
     if (size_t{0} == entries.length() || true == logs_.empty()) {
         return 0ull;
@@ -1171,12 +1194,13 @@ uint64_t RaftImpl::findConflict(gsl::array_view<const Entry> entries) const
     assert(size_t{0} < entries.length());
     assert(false == logs_.empty());
     for (size_t idx = 0; idx < entries.length(); ++idx) {
-        if (!isMatch(entries[idx].index(), entries[idx].term())) {   
-            return entries[idx].index();
+        assert(nullptr != entries[idx]);
+        if (!isMatch(entries[idx]->index(), entries[idx]->term())) {   
+            return entries[idx]->index();
         }
     }
 
-    return entries[entries.length() -1].index() + 1ull;
+    return entries[entries.length() -1]->index() + 1ull;
 }
 
 bool RaftImpl::updateReplicateState(
