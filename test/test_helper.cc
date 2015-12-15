@@ -43,6 +43,7 @@ apply_until(
 {
     while (false == vec_msg.empty()) {
         vec_msg = apply(map_raft, vec_msg);
+        logdebug(" new vec_msg.size %zu", vec_msg.size());
     }
 }
 

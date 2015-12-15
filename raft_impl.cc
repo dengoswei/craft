@@ -364,8 +364,21 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
         }
             break;
 
+        case MessageType::MsgNull:
+        {
+            // check followers timeout ?
+            assert(0ull == msg.from());
+            auto time_now = chrono::system_clock::now();
+            if (raft_impl.isHeartbeatTimeout(time_now)) {
+                raft_impl.updateHeartbeatTime(time_now);
+                rsp_msg_type = MessageType::MsgHeartbeat;
+            }
+        }
+            break;
+
         default:
-            logdebug("IGNORE: recv msg type %d", static_cast<int>(msg.type()));
+            logdebug("IGNORE: recv msg type %d", 
+                    static_cast<int>(msg.type()));
             // TODO: ?
             break;
     }
@@ -382,6 +395,7 @@ RaftImpl::RaftImpl(
     , selfid_(selfid)
     , election_timeout_(election_timeout)
     , active_time_(chrono::system_clock::now())
+    , hb_timeout_(election_timeout / 2)
 {
     assert(size_t{3} <= peer_ids.size());
     for (auto id : peer_ids) {
@@ -394,6 +408,7 @@ RaftImpl::RaftImpl(
 
     assert(peer_ids_.end() == peer_ids_.find(selfid_));
     assert(0 < election_timeout_.count());
+    assert(0 < hb_timeout_.count());
     becomeFollower();
 }
 
@@ -545,7 +560,8 @@ RaftImpl::produceRsp(
             assert(nullptr == rsp_msg);
             logdebug("MsgApp selfid %" PRIu64 " req_msg.from %" PRIu64 
                     " req_msg.index %" PRIu64 " vec_msg.size %zu", 
-                    selfid_, req_msg.from(), req_msg.index(), vec_msg.size());
+                    selfid_, req_msg.from(), req_msg.index(), 
+                    vec_msg.size());
         }
     }
         break;
@@ -581,8 +597,9 @@ RaftImpl::produceRsp(
         logdebug("MsgAppResp term %" PRIu64 " req_msg.from(leader) %" 
                 PRIu64 " prev_index %" PRIu64 " prev_log_term %" PRIu64 
                 " entries_size %d reject %d next_index %" PRIu64, 
-                term_, req_msg.from(), req_msg.index(), req_msg.log_term(), 
-                req_msg.entries_size(), static_cast<int>(rsp_msg->reject()), 
+                term_, req_msg.from(), req_msg.index(), 
+                req_msg.log_term(), req_msg.entries_size(),
+                static_cast<int>(rsp_msg->reject()), 
                 rsp_msg->index());
     }
         break;
@@ -1298,6 +1315,7 @@ void RaftImpl::becomeLeader()
 
     // for most-up-to-date MsgApp
     next_indexes_[selfid_] = last_index + 1ull;
+    hb_time_ = std::chrono::system_clock::now() - hb_timeout_;
     return ;
 }
 
@@ -1311,6 +1329,21 @@ void RaftImpl::setLeader(bool reset, uint64_t leader_id)
     }
 }
 
+bool RaftImpl::isHeartbeatTimeout(
+        std::chrono::time_point<
+            std::chrono::system_clock> time_now)
+{
+    return hb_time_ + hb_timeout_ < time_now;
+}
+
+void RaftImpl::updateHeartbeatTime(
+        std::chrono::time_point<
+            std::chrono::system_clock> next_hb_time)
+{
+    // TODO: format print time point;
+    logdebug("update ");
+    hb_time_ = next_hb_time;
+}
 
 } // namespace raft
 

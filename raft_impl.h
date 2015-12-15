@@ -156,6 +156,13 @@ public:
     void becomeCandidate();
     void becomeLeader();
 
+    bool isHeartbeatTimeout(
+            std::chrono::time_point<
+                std::chrono::system_clock> time_now);
+    void updateHeartbeatTime(
+            std::chrono::time_point<
+                std::chrono::system_clock> next_hb_time);
+
 private:
     RaftRole role_ = RaftRole::FOLLOWER;
     TimeoutHandler timeout_handler_;
@@ -186,6 +193,9 @@ private:
     // # leader #
     std::map<uint64_t, uint64_t> next_indexes_;
     std::map<uint64_t, uint64_t> match_indexes_;
+
+    std::chrono::milliseconds hb_timeout_;
+    std::chrono::time_point<std::chrono::system_clock> hb_time_;
     // TODO:
     // trace peer_ids need log entries not in mem
     std::set<uint64_t> ids_not_in_mem_;

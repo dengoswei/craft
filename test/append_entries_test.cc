@@ -24,36 +24,6 @@ std::vector<std::string> extract_value(
     return vec_value;
 }
 
-//std::unique_ptr<raft::Message> buildMsgProp(
-//        uint64_t logid, uint64_t leader_id, 
-//        uint64_t term, uint64_t prev_index, int entries_size)
-//{ 
-//    assert(0ull < leader_id);
-//    assert(0ull < term);
-//    assert(0ull <= prev_index);
-//    assert(0 < entries_size);
-//    auto prop_msg = make_unique<Message>();
-//    assert(nullptr != prop_msg);
-//
-//    prop_msg->set_logid(logid);
-//    prop_msg->set_type(MessageType::MsgProp);
-//    prop_msg->set_to(leader_id);
-//    prop_msg->set_term(term);
-//    prop_msg->set_index(prev_index);
-//
-//    RandomStrGen<100, 200> str_gen;
-//    for (auto i = 0; i < entries_size; ++i) {
-//        auto entry = prop_msg->add_entries();
-//        assert(nullptr != entry);
-//
-//        entry->set_type(EntryType::EntryNormal);
-//        entry->set_data(str_gen.Next());
-//    }
-//
-//    return prop_msg;
-//}
-
-
 TEST(TestRaftAppendEntries, SimpleAppendTest)
 {
     uint64_t logid = 0ull;
