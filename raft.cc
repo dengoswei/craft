@@ -238,6 +238,8 @@ raft::ErrorCode Raft::TryToBecomeLeader()
 {
     Message msg_null;
     msg_null.set_type(MessageType::MsgNull);
+    msg_null.set_logid(GetLogId());
+    msg_null.set_to(GetSelfId());
     {
         lock_guard<mutex> lock(raft_mutex_);
         assert(nullptr != raft_impl_);
@@ -250,11 +252,32 @@ raft::ErrorCode Raft::TryToBecomeLeader()
         raft_impl_->makeElectionTimeout(chrono::system_clock::now());
 
         msg_null.set_term(raft_impl_->getTerm());
-        msg_null.set_logid(raft_impl_->getLogId());
-        msg_null.set_to(raft_impl_->getSelfId());
     }
 
     return Step(msg_null); 
+}
+
+raft::ErrorCode Raft::MakeTimeoutHeartbeat()
+{
+    Message msg_null;
+    msg_null.set_type(MessageType::MsgNull);
+    msg_null.set_logid(GetLogId());
+    msg_null.set_to(GetSelfId());
+    {
+        lock_guard<mutex> lock(raft_mutex_);
+        assert(nullptr != raft_impl_);
+        if (raft_impl_->getSelfId() != raft_impl_->getLeader()) {
+            // not a leader
+            return raft::ErrorCode::NOT_LEADER;
+        }
+
+        assert(RaftRole::LEADER == raft_impl_->getRole());
+        raft_impl_->makeHeartbeatTimeout(chrono::system_clock::now());
+
+        msg_null.set_term(raft_impl_->getTerm());
+    }
+
+    return Step(msg_null);
 }
 
 bool Raft::IsFollower() 
@@ -277,6 +300,13 @@ bool Raft::checkRole(raft::RaftRole role)
     lock_guard<mutex> lock(raft_mutex_);
     assert(nullptr != raft_impl_);
     return role == raft_impl_->getRole();
+}
+
+uint64_t Raft::GetTerm()
+{
+    lock_guard<mutex> lock(raft_mutex_);
+    assert(nullptr != raft_impl_);
+    return raft_impl_->getTerm();
 }
 
 } // namespace raft;

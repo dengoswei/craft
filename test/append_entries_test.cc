@@ -24,6 +24,17 @@ std::vector<std::string> extract_value(
     return vec_value;
 }
 
+void updateAllActiveTime(
+        std::map<uint64_t, std::unique_ptr<raft::RaftImpl>>& map_raft)
+{
+    auto tp = chrono::system_clock::now();
+    for (auto& id_raft : map_raft) {
+        auto& raft = id_raft.second;
+        assert(nullptr != raft);
+        raft->updateActiveTime(tp);
+    }
+}
+
 TEST(TestRaftAppendEntries, SimpleAppendTest)
 {
     uint64_t logid = 0ull;
@@ -136,6 +147,7 @@ TEST(TestRaftAppendEntries, RepeatAppendTest)
         }
         assert(size_t{1} == vec_msg.size());
 
+        updateAllActiveTime(map_raft);
         apply_until(map_raft, move(vec_msg));
         hassert(fix_term == raft->getTerm(), 
                 "i %d fix_term %" PRIu64 " term %" PRIu64, 

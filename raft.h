@@ -66,7 +66,11 @@ public:
     bool IsFollower();
     bool IsLeader();
     bool IsCandidate();
+
     raft::ErrorCode TryToBecomeLeader();
+    raft::ErrorCode MakeTimeoutHeartbeat();
+
+    uint64_t GetTerm();
 
     // only for test
 

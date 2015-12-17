@@ -358,6 +358,11 @@ void SendHelper::apply_until(
     }
 }
 
+bool SendHelper::empty() 
+{
+    lock_guard<mutex> lock(msg_queue_mutex_);
+    return msg_queue_.empty();
+}
 
 
 std::unique_ptr<raft::Message> 

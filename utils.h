@@ -34,10 +34,10 @@ void log_nothing(const char* /* format */, ...) {
 #else
 
 #define logdebug(format, ...) \
-    printf("[DEBUG: %s %s %d] " format "\n", __FILE__, __func__, __LINE__, ##__VA_ARGS__)
+    printf("[DEB: %-20s %-20s %-4d] " format "\n", __FILE__, __func__, __LINE__, ##__VA_ARGS__)
 
 #define logerr(format, ...) \
-    printf("[ERROR: %s %s %d] " format "\n", __FILE__, __func__, __LINE__, ##__VA_ARGS__)
+    printf("[ERR: %-20s %-20s %-4d] " format "\n", __FILE__, __func__, __LINE__, ##__VA_ARGS__)
 
 #endif
 

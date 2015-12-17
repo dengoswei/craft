@@ -124,6 +124,8 @@ public:
     void apply_until(
             std::map<uint64_t, std::unique_ptr<raft::Raft>>& map_raft);
 
+    bool empty();
+
 private:
     std::mutex msg_queue_mutex_;
     std::deque<std::unique_ptr<raft::Message>> msg_queue_;

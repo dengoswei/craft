@@ -446,7 +446,6 @@ MessageType RaftImpl::CheckTerm(uint64_t msg_term)
         if (msg_term > term_) {
             becomeFollower();
             setTerm(msg_term);
-            setVoteFor(true, 0ull); // reset vote_for_ in new term;
             assignStoreSeq(META_INDEX);
             return MessageType::MsgNull;
         }
@@ -487,6 +486,8 @@ MessageType RaftImpl::step(const Message& msg)
 
     assert(msg.term() == term_);
     // 2. check timeout
+    // ! IMPORTANT !
+    // if setTerm => false == CheckTimeout
     rsp_msg_type = CheckTimout(chrono::system_clock::now());
     if (MessageType::MsgNull != rsp_msg_type) {
         assert(MessageType::MsgVote == rsp_msg_type);
@@ -1066,8 +1067,8 @@ void RaftImpl::updateActiveTime(
     {
         auto at_str = format_time(active_time_);
         auto time_str = format_time(time_now);
-        logdebug("update active_time_ %s to time_now %s", 
-                at_str.c_str(), time_str.c_str());
+        logdebug("selfid %" PRIu64 " update active_time_ %s to time_now %s", 
+                getSelfId(), at_str.c_str(), time_str.c_str());
     }
     active_time_ = time_now;
 }
@@ -1375,6 +1376,9 @@ void RaftImpl::becomeFollower()
 {
     setRole(RaftRole::FOLLOWER);
     setLeader(true, 0ull);
+    setVoteFor(true, 0ull); // reset vote_for_
+    // new follower => will not timeout immidiate;
+    updateActiveTime(chrono::system_clock::now());
     // TODO ??
 
     return ;
@@ -1457,8 +1461,15 @@ void RaftImpl::updateHeartbeatTime(
 void RaftImpl::makeElectionTimeout(
         std::chrono::time_point<std::chrono::system_clock> tp)
 {
-    tp -= chrono::milliseconds{getElectionTimout() + 1};
+    tp -= chrono::milliseconds{getElectionTimeout() + 1};
     updateActiveTime(tp);
+}
+
+void RaftImpl::makeHeartbeatTimeout(
+        std::chrono::time_point<std::chrono::system_clock> tp)
+{
+    tp -= chrono::milliseconds{getHeartbeatTimeout() + 1};
+    updateHeartbeatTime(tp);
 }
 
 } // namespace raft

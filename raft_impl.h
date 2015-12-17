@@ -85,7 +85,11 @@ public:
     std::unique_ptr<raft::HardState>
         getCurrentHardState() const;
 
+    // test helper function
     void makeElectionTimeout(
+            std::chrono::time_point<std::chrono::system_clock> tp);
+
+    void makeHeartbeatTimeout(
             std::chrono::time_point<std::chrono::system_clock> tp);
 
 public:
@@ -135,8 +139,12 @@ public:
     void commitedStoreSeq(
             uint64_t meta_seq, uint64_t log_idx, uint64_t log_seq);
 
-    int getElectionTimout() const {
+    int getElectionTimeout() const {
         return election_timeout_.count();
+    }
+
+    int getHeartbeatTimeout() const {
+        return hb_timeout_.count();
     }
 
     void updateActiveTime(
@@ -179,7 +187,6 @@ public:
     void updateHeartbeatTime(
             std::chrono::time_point<
                 std::chrono::system_clock> next_hb_time);
-
 
 private:
     RaftRole role_ = RaftRole::FOLLOWER;
