@@ -1,6 +1,8 @@
 #include "test_helper.h"
 #include "raft_impl.h"
+#include "raft.h"
 #include "raft.pb.h"
+
 
 
 using namespace std;
@@ -48,8 +50,10 @@ apply_until(
 }
 
 std::map<uint64_t, std::unique_ptr<raft::RaftImpl>>
-    build_rafts(const std::set<uint64_t> group_ids, 
-            uint64_t logid, int min_timeout, int max_timeout)
+    build_rafts(
+            uint64_t logid, 
+            const std::set<uint64_t>& group_ids, 
+            int min_timeout, int max_timeout)
 {
     assert(0 < min_timeout);
     assert(min_timeout <= max_timeout);
@@ -85,12 +89,11 @@ void init_leader(
         
         auto tp = chrono::system_clock::now();
         if (leader_id == id_raft.second->getSelfId()) {
-            // timeout leader_id
-            int timeout = id_raft.second->getElectionTimout() + 1;
-            tp = tp - chrono::milliseconds{timeout};
+            id_raft.second->makeElectionTimeout(tp);
         }
-
-        id_raft.second->updateActiveTime(tp);
+        else {
+            id_raft.second->updateActiveTime(tp);
+        }
     }
 
     vector<unique_ptr<Message>> vec_msg;
@@ -127,13 +130,235 @@ comm_init(uint64_t leader_id,
         int min_election_timeout, int max_election_timeout)
 {
     auto map_raft = build_rafts(
-            GROUP_IDS, LOGID, min_election_timeout, max_election_timeout);
+            LOGID, GROUP_IDS, min_election_timeout, max_election_timeout);
     assert(map_raft.size() == GROUP_IDS.size());
     assert(map_raft.end() != map_raft.find(leader_id));
 
     init_leader(LOGID, leader_id, map_raft);
     return make_tuple(LOGID, GROUP_IDS, move(map_raft));
 }
+
+std::unique_ptr<raft::Raft>
+build_raft(
+        uint64_t logid, 
+        uint64_t selfid, 
+        const std::set<uint64_t>& group_ids, 
+        int min_election_timeout, int max_election_timeout, 
+        raft::RaftCallBack callback)
+{
+    assert(0 < min_election_timeout);
+    assert(min_election_timeout <= max_election_timeout);
+
+    assert(group_ids.end() != group_ids.find(selfid));
+    auto election_timeout = 
+        random_int(min_election_timeout, max_election_timeout);
+    assert(0 < election_timeout);
+
+    return make_unique<Raft>(
+            logid, selfid, group_ids, election_timeout, callback);
+}
+
+void init_leader(
+        const uint64_t logid, 
+        const uint64_t leader_id, 
+        SendHelper& sender, 
+        std::map<uint64_t, std::unique_ptr<raft::Raft>>& map_raft)
+{
+    assert(map_raft.end() != map_raft.find(leader_id));
+
+    // 1. timeout
+    for (auto& id_raft : map_raft) {
+        auto& raft = id_raft.second;
+        assert(nullptr != raft);
+        assert(logid == raft->GetLogId());
+        assert(id_raft.first == raft->GetSelfId());
+
+        auto tp = chrono::system_clock::now();
+        if (leader_id == raft->GetSelfId()) {
+            auto ret_code = raft->TryToBecomeLeader();
+            assert(raft::ErrorCode::OK == ret_code);
+        } 
+    }
+
+    sender.apply_until(map_raft);
+    for (const auto& id_raft : map_raft) {
+        auto& raft = id_raft.second;
+        assert(nullptr != raft);
+        if (leader_id == raft->GetSelfId()) {
+            assert(true == raft->IsLeader());
+        }
+        else {
+            assert(true == raft->IsFollower());
+        }
+    }
+}
+
+std::tuple<
+    uint64_t, 
+    std::set<uint64_t>, 
+    std::map<uint64_t, std::unique_ptr<StorageHelper>>, 
+    std::map<uint64_t, std::unique_ptr<raft::Raft>>>
+comm_init(
+        uint64_t leader_id, 
+        SendHelper& sender, 
+        int min_election_timeout, int max_election_timeout)
+{
+    map<uint64_t, unique_ptr<StorageHelper>> map_store;
+    map<uint64_t, unique_ptr<Raft>> map_raft;
+
+    auto logid = LOGID;
+    auto group_ids = GROUP_IDS;
+    for (auto id : group_ids) {
+        assert(map_store.end() == map_store.find(id));
+        map_store[id] = make_unique<StorageHelper>();
+        assert(nullptr != map_store[id]);
+
+        StorageHelper* store = map_store[id].get();
+        assert(nullptr != store);
+
+        RaftCallBack callback;
+        callback.read = [=](uint64_t log_index) {
+            assert(nullptr != store);
+            return store->read(log_index);
+        };
+
+        callback.write = [=](
+                uint64_t meta_seq, unique_ptr<HardState>&& hs, 
+                uint64_t log_seq, vector<unique_ptr<Entry>>&& vec_entries) {
+            assert(nullptr != store);
+            return store->write(
+                    meta_seq, move(hs), log_seq, move(vec_entries));
+        };
+
+        callback.send = [&](vector<unique_ptr<Message>>&& vec_msg) {
+            for (auto& msg : vec_msg) {
+                sender.send(move(msg));
+            }
+            return 0;
+        };
+
+        auto raft = build_raft(logid, id, group_ids, 50, 100, callback);
+        assert(nullptr != raft);
+        assert(map_raft.end() == map_raft.find(id));
+        map_raft[id] = move(raft);
+    }
+
+    assert(map_raft.size() == map_store.size());
+    assert(map_raft.size() == GROUP_IDS.size());
+    assert(map_raft.end() != map_raft.find(leader_id));
+
+    init_leader(logid, leader_id, sender, map_raft);
+    return make_tuple(logid, move(group_ids), move(map_store), move(map_raft));
+}
+
+
+int StorageHelper::write(
+        uint64_t meta_seq, 
+        std::unique_ptr<raft::HardState>&& hs)
+{
+    // hold lock;
+    if (max_meta_seq_ < meta_seq) {
+        meta_info_ = move(hs);
+        max_meta_seq_ = meta_seq;
+    }
+    return 0;
+}
+
+int StorageHelper::write(
+        uint64_t log_seq, 
+        std::vector<std::unique_ptr<raft::Entry>>&& vec_entries)
+{
+    // hold lock;
+    if (max_log_seq_ < log_seq) {
+        for (auto& entry : vec_entries) {
+            assert(nullptr != entry);
+            log_entries_[entry->index()] = move(entry);
+            assert(nullptr == entry);
+        }
+
+        max_log_seq_ = log_seq;
+    }
+
+    return 0;
+}
+
+int StorageHelper::write(
+        uint64_t meta_seq, 
+        std::unique_ptr<raft::HardState>&& hs, 
+        uint64_t log_seq, 
+        std::vector<std::unique_ptr<raft::Entry>>&& vec_entries)
+{
+    lock_guard<mutex> lock(mutex_);
+    auto ret = write(meta_seq, move(hs));
+    if (0 != ret) {
+        return ret;
+    }
+
+    return write(log_seq, move(vec_entries));
+}
+
+std::unique_ptr<raft::Entry> StorageHelper::read(uint64_t log_index)
+{
+    if (0ull == log_index) {
+        return nullptr;
+    }
+
+    lock_guard<mutex> lock(mutex_);
+    if (log_entries_.end() == log_entries_.find(log_index)) {
+        return nullptr;
+    }
+
+    auto& entry = log_entries_[log_index];
+    assert(nullptr != entry);
+    assert(entry->index() == log_index);
+    return make_unique<Entry>(*entry);
+}
+
+void SendHelper::send(std::unique_ptr<raft::Message>&& msg)
+{
+    assert(nullptr != msg);
+    logdebug("msg: from %" PRIu64 " to %" PRIu64 " msg_type %d", 
+            msg->from(), msg->to(), static_cast<int>(msg->type()));
+    lock_guard<mutex> lock(msg_queue_mutex_);
+    msg_queue_.push_back(move(msg));
+}
+
+size_t SendHelper::apply(
+        std::map<uint64_t, std::unique_ptr<raft::Raft>>& map_raft)
+{
+    deque<unique_ptr<Message>> prev_msg_queue;
+    {
+        lock_guard<mutex> lock(msg_queue_mutex_);
+        prev_msg_queue.swap(msg_queue_);
+    }
+    for (auto& msg : prev_msg_queue) {
+        assert(nullptr != msg);
+        assert(map_raft.end() != map_raft.find(msg->to()));
+        auto& raft = map_raft[msg->to()];
+        assert(nullptr != raft);
+
+        auto ret_code = raft->Step(*msg);
+        assert(ErrorCode::OK == ret_code);
+    }
+    return prev_msg_queue.size();
+}
+
+void SendHelper::apply_until(
+        std::map<uint64_t, std::unique_ptr<raft::Raft>>& map_raft)
+{
+    auto check_empty = [&]() -> bool {
+        lock_guard<mutex> lock(msg_queue_mutex_);
+        return msg_queue_.empty();
+    };
+
+    while (false == check_empty()) {
+        size_t apply_count = apply(map_raft);
+        logdebug("apply_count %zu msg_queue_.size %zu", 
+                apply_count, msg_queue_.size());
+    }
+}
+
+
 
 std::unique_ptr<raft::Message> 
 buildMsgProp(

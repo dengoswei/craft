@@ -2,15 +2,22 @@
 
 #include <map>
 #include <set>
+#include <deque>
 #include <vector>
 #include <memory>
+#include <mutex>
 #include <stdint.h>
 
 
 namespace raft {
 
 class Message;
+class HardState;
+class Entry;
 class RaftImpl;
+class Raft;
+
+struct RaftCallBack;
 
 } // namespace raft
 
@@ -19,7 +26,10 @@ namespace test {
 extern uint64_t LOGID;
 extern std::set<uint64_t> GROUP_IDS;
 
+class StorageHelper;
+class SendHelper;
 
+// for raft_impl
 std::vector<std::unique_ptr<raft::Message>>
 apply(
         std::map<uint64_t, std::unique_ptr<raft::RaftImpl>>& map_raft, 
@@ -32,8 +42,10 @@ void apply_until(
 
 
 std::map<uint64_t, std::unique_ptr<raft::RaftImpl>>
-    build_rafts(const std::set<uint64_t> group_ids, 
-            uint64_t logid, int min_timeout, int max_timeout);
+    build_rafts(
+            uint64_t logid, 
+            const std::set<uint64_t>& group_ids, 
+            int min_timeout, int max_timeout);
 
 void init_leader(
         uint64_t logid, 
@@ -47,6 +59,75 @@ std::tuple<
     std::map<uint64_t, std::unique_ptr<raft::RaftImpl>>>
 comm_init(uint64_t leader_id, 
         int min_election_timeout, int max_election_timeout);
+// end of raft_impl
+
+
+// raft
+std::unique_ptr<raft::Raft>
+build_raft(
+        uint64_t logid,
+        uint64_t selfid, 
+        const std::set<uint64_t>& group_ids, 
+        int min_election_timeout, int max_election_timeout, 
+        raft::RaftCallBack callback);
+
+std::tuple<
+    uint64_t, 
+    std::set<uint64_t>, 
+    std::map<uint64_t, std::unique_ptr<StorageHelper>>, 
+    std::map<uint64_t, std::unique_ptr<raft::Raft>>>
+comm_init(
+        uint64_t leader_id, 
+        SendHelper& sender, 
+        int min_election_timeout, int max_election_timeout);
+
+
+// end of raft
+
+class StorageHelper {
+
+public:
+    int write(
+            uint64_t meta_seq, 
+            std::unique_ptr<raft::HardState>&& hs, 
+            uint64_t log_seq, 
+            std::vector<std::unique_ptr<raft::Entry>>&& vec_entries);
+
+    std::unique_ptr<raft::Entry> read(uint64_t log_index);
+
+private:
+    int write(uint64_t meta_seq, std::unique_ptr<raft::HardState>&& hs);
+
+    int write(
+            uint64_t log_seq, 
+            std::vector<std::unique_ptr<raft::Entry>>&& vec_entries);
+
+private:
+    std::mutex mutex_;
+    uint64_t max_meta_seq_;
+    std::unique_ptr<raft::HardState> meta_info_;
+
+    uint64_t max_log_seq_;
+    std::map<uint64_t, std::unique_ptr<raft::Entry>> log_entries_;
+};
+
+
+class SendHelper {
+
+public:
+
+    void send(std::unique_ptr<raft::Message>&& msg);
+
+    size_t apply(
+            std::map<uint64_t, std::unique_ptr<raft::Raft>>& map_raft);
+
+    void apply_until(
+            std::map<uint64_t, std::unique_ptr<raft::Raft>>& map_raft);
+
+private:
+    std::mutex msg_queue_mutex_;
+    std::deque<std::unique_ptr<raft::Message>> msg_queue_;
+};
 
 
 std::unique_ptr<raft::Message> buildMsgProp(
@@ -63,6 +144,7 @@ batchBuildMsgProp(
         
 std::unique_ptr<raft::Message>
     buildMsgNull(uint64_t to_id, uint64_t logid, uint64_t term);
+
 
 
 } // namespace test

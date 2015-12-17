@@ -6,9 +6,18 @@ package raft;
 enum ErrorCode {
     OK = 0;
     UNKOWN = -1;
+    UNCOMMITED_INDEX = 1;
 
-    INVALID_TERM = -100;
-    
+    INVALID_TERM = -99;
+    BUSY = -100;
+
+    INVALID_INDEX = -200;
+
+    STORAGE_READ_ERROR = -300;
+    STORAGE_WRITE_ERROR = -310;
+
+    NOT_LEADER = -1000;
+    OCCUPY = -1100;
 }
 
 
@@ -75,6 +84,7 @@ message HardState {
 	optional uint64 term   = 1;
 	optional uint64 vote   = 2;
 	optional uint64 commit = 3;
+    optional uint64 seq    = 4;
 }
 
 message ConfState {

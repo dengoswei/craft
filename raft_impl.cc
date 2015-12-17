@@ -1012,7 +1012,8 @@ uint64_t RaftImpl::assignStoreSeq(uint64_t index)
         pending_meta_seq_ = seq;
     }
     else {
-        pending_log_idx_ = min(pending_log_idx_, index);
+        pending_log_idx_ = 
+            0ull == pending_log_idx_ ? index : min(pending_log_idx_, index);
         pending_log_seq_ = seq;
     }
 
@@ -1022,26 +1023,15 @@ uint64_t RaftImpl::assignStoreSeq(uint64_t index)
             getSelfId(), index, pending_meta_seq_, 
             pending_log_idx_, pending_log_seq_);
     return seq;
-//    auto seq = ++store_seq_;
-//    pending_store_[index] = seq;
-//    if (0ull != index) {
-//        // normal log index
-//        // => truncate any pending store seq with index > $index;
-//        pending_store_.erase(
-//                pending_store_.upper_bound(index), pending_store_.end());
-//    }
-//    logdebug("index %" PRIu64 " assigned store_seq %" PRIu64, 
-//            index, seq);
-//    return seq;
 }
 
 std::tuple<uint64_t, uint64_t, uint64_t>
-RaftImpl::getStoreSeq(uint64_t index) const
+RaftImpl::getStoreSeq() const
 {
-    logdebug("selfid %" PRIu64 " index %" PRIu64 
+    logdebug("selfid %" PRIu64 
             " pending_meta_seq_ %" PRIu64 
             " pending_log_idx_ %" PRIu64 " pending_log_seq_ %" PRIu64, 
-            getSelfId(), index, pending_meta_seq_, 
+            getSelfId(), pending_meta_seq_, 
             pending_log_idx_, pending_log_seq_);
 
     return make_tuple(
@@ -1069,18 +1059,6 @@ void RaftImpl::commitedStoreSeq(
         pending_log_seq_ = 0ull;
     }
 }
-
-//uint64_t RaftImpl::pendingStoreSeq(uint64_t index) const
-//{
-//    if (pending_store_.end() != pending_store_.find(index)) {
-//        logdebug("index %" PRIu64 " pending store seq %" PRIu64, 
-//                index, pending_store_.at(index));
-//        return pending_store_.at(index);
-//    }
-//
-//    return 0ull;
-//}
-//
 
 void RaftImpl::updateActiveTime(
         std::chrono::time_point<std::chrono::system_clock> time_now)
@@ -1476,6 +1454,12 @@ void RaftImpl::updateHeartbeatTime(
     hb_time_ = next_hb_time;
 }
 
+void RaftImpl::makeElectionTimeout(
+        std::chrono::time_point<std::chrono::system_clock> tp)
+{
+    tp -= chrono::milliseconds{getElectionTimout() + 1};
+    updateActiveTime(tp);
+}
 
 } // namespace raft
 

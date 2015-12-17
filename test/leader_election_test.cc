@@ -2,6 +2,7 @@
 #include <set>
 #include "gtest/gtest.h"
 #include "raft_impl.h"
+#include "raft.h"
 #include "utils.h"
 #include "raft.pb.h"
 #include "test_helper.h"
@@ -37,12 +38,12 @@ CheckLeader(
 }
 
 
-TEST(TestRaftLeaderElection, SimpleElectionSucc)
+TEST(TestRaftLeaderElectionImpl, SimpleElectionSucc)
 {
     uint64_t logid = test::LOGID;
     const auto& group_ids = test::GROUP_IDS;
     
-    auto map_raft = build_rafts(group_ids, logid, 10, 20);
+    auto map_raft = build_rafts(logid, group_ids, 10, 20);
     assert(map_raft.size() == group_ids.size());
 
     uint64_t leader_id = 1ull;
@@ -215,6 +216,24 @@ TEST(TestRaftLeaderElection, EmptyStateRepeatElectionSucc)
         assert(prev_term < curr_term);
     }
 }
+
+TEST(TestRaftLeaderElection, SimpleElectionSucc)
+{
+    SendHelper sender;
+    uint64_t logid = 0ull;
+    set<uint64_t> group_ids;
+    map<uint64_t, unique_ptr<StorageHelper>> map_store;
+    map<uint64_t, unique_ptr<Raft>> map_raft;
+    uint64_t leader_id = 1ull;
+    tie(logid, group_ids, map_store, map_raft) = 
+        comm_init(leader_id, sender, 50, 100);
+
+    assert(map_store.size() == map_raft.size());
+    auto& raft = map_raft[leader_id];
+    assert(true == raft->IsLeader());
+}
+
+
 
 
 

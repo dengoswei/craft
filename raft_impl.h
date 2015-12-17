@@ -37,7 +37,7 @@ private:
 
 public:
     RaftImpl(uint64_t logid, uint64_t selfid, 
-            std::set<uint64_t> peer_ids, int election_timeout);
+            std::set<uint64_t> group_ids, int election_timeout);
 
     ~RaftImpl();
 
@@ -85,6 +85,9 @@ public:
     std::unique_ptr<raft::HardState>
         getCurrentHardState() const;
 
+    void makeElectionTimeout(
+            std::chrono::time_point<std::chrono::system_clock> tp);
+
 public:
 
     uint64_t getLogId() const {
@@ -126,8 +129,7 @@ public:
     uint64_t assignStoreSeq(uint64_t index);
 
     // meta_seq, log_idx, log_seq
-    std::tuple<uint64_t, uint64_t, uint64_t> 
-        getStoreSeq(uint64_t index) const;
+    std::tuple<uint64_t, uint64_t, uint64_t> getStoreSeq() const;
 
     // commited
     void commitedStoreSeq(
