@@ -77,7 +77,7 @@ void init_leader(
 {
     assert(map_raft.end() != map_raft.find(leader_id));
     // 1. timeout
-    for (const auto& id_raft : map_raft) {
+    for (auto& id_raft : map_raft) {
         assert(nullptr != id_raft.second);
         assert(logid == id_raft.second->getLogId());
         assert(RaftRole::FOLLOWER == id_raft.second->getRole());
@@ -189,6 +189,19 @@ batchBuildMsgProp(
     return vec_msg;
 }
 
+
+std::unique_ptr<raft::Message>
+buildMsgNull(uint64_t to_id, uint64_t logid, uint64_t term)
+{
+    auto msg_null = make_unique<Message>();
+    
+    msg_null->set_type(MessageType::MsgNull);
+    msg_null->set_term(term);
+    msg_null->set_logid(logid);
+    msg_null->set_to(to_id);
+
+    return msg_null;
+}
 
 
 

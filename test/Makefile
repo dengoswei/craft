@@ -63,6 +63,10 @@ append_entries_test: append_entries_test.o test_helper.o\
 	../raft_impl.o ../craftpb/raft.pb.o gtest_main.a
 	$(BUILDEXE)
 
+store_test: store_test.o test_helper.o ../raft_impl.o \
+	../craftpb/raft.pb.o gtest_main.a
+	$(BUILDEXE)
+
 
 %.pb.cc: %.proto
 	$(PROTOC) -I $(PROTOS_PATH) --cpp_out=../craftpb/ $<

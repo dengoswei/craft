@@ -11,19 +11,6 @@ using namespace std;
 using namespace test;
 
 
-std::unique_ptr<raft::Message>
-buildMsgNull(uint64_t to_id, uint64_t logid, uint64_t term)
-{
-    auto msg_null = make_unique<Message>();
-    
-    msg_null->set_type(MessageType::MsgNull);
-    msg_null->set_term(term);
-    msg_null->set_logid(logid);
-    msg_null->set_to(to_id);
-
-    return msg_null;
-}
-
 // leaderid, term
 std::tuple<uint64_t, uint64_t>
 CheckLeader(

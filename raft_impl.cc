@@ -144,7 +144,7 @@ MessageType onTimeout(
             std::chrono::time_point<std::chrono::system_clock> time_now)
 {
     assert_role(raft_impl, RaftRole::FOLLOWER);
-    logdebug("selfid %" PRIu64 " term %" PRIu64, 
+    logdebug("selfid(follower) %" PRIu64 " term %" PRIu64, 
             raft_impl.getSelfId(), raft_impl.getTerm());
     // raft paper: 
     // Followers 5.2
@@ -220,8 +220,19 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
             assert(static_cast<size_t>(
                         msg.entries_size()) == entries.length());
 
-            raft_impl.appendEntries(
+            auto append_count = 
+                raft_impl.appendEntries(
                     msg.index(), msg.log_term(), msg.commit(), entries);
+            auto store_seq = 0 < append_count ? 
+                raft_impl.assignStoreSeq(msg.index() + 1ull) : 
+                0ull;
+            logdebug("selfid(follower) %" PRIu64 " index %" PRIu64 
+                    " term %" PRIu64 " log_term %" PRIu64 
+                    " entries_size %zu append_count %d"
+                    " store_seq %" PRIu64, 
+                    raft_impl.getSelfId(), msg.index(), msg.term(), 
+                    msg.log_term(), 
+                    vec_entries.size(), append_count, store_seq);
 
             raft_impl.updateActiveTime(time_now);
 
@@ -253,12 +264,13 @@ MessageType onTimeout(
         std::chrono::time_point<std::chrono::system_clock> time_now)
 {
     assert_role(raft_impl, RaftRole::CANDIDATE);
-    logdebug("selfid %" PRIu64 " term %" PRIu64, 
+    logdebug("selfid(candidate) %" PRIu64 " term %" PRIu64, 
             raft_impl.getSelfId(), raft_impl.getTerm());
 
     // raft paper:
     // Candidates 5.2
-    // On conversion to candidate or election timeout elapse, start election:
+    // On conversion to candidate or election timeout elapse, 
+    // start election:
     raft_impl.beginVote();
     raft_impl.updateActiveTime(time_now);
     return MessageType::MsgVote;
@@ -290,7 +302,8 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
                     " handle MsgVoteResp", raft_impl.getSelfId());
             break;
         default:
-            logdebug("IGNORE: recv msg type %d", static_cast<int>(msg.type()));
+            logdebug("IGNORE: recv msg type %d", 
+                    static_cast<int>(msg.type()));
             // TODO: ?
             break;
     }
@@ -327,8 +340,15 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
             assert(static_cast<size_t>(
                         msg.entries_size()) == entries.length());
 
-            assert(0 == 
-                    raft_impl.checkAndAppendEntries(msg.index(), entries));
+            assert(0 == raft_impl.checkAndAppendEntries(
+                            msg.index(), entries));
+            
+            assert(0ull < msg.index() + 1ull);
+            auto store_seq = raft_impl.assignStoreSeq(msg.index() + 1ull);
+            logdebug("selfid(leader) %" PRIu64 " MsgProp index %" PRIu64 
+                    " store_seq %" PRIu64 " entries_size %zu", 
+                    raft_impl.getSelfId(), msg.index(), store_seq, 
+                    vec_entries.size());
             rsp_msg_type = MessageType::MsgApp;
         }
             break;
@@ -338,12 +358,14 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
             // collect appendEntry resp
             // TODO: update commited!
             bool update = raft_impl.updateReplicateState(
-                    msg.from(), msg.reject(), msg.reject_hint(), msg.index());
+                    msg.from(), msg.reject(), 
+                    msg.reject_hint(), msg.index());
             if (update) {
                 rsp_msg_type = MessageType::MsgApp;
             }
 
-            logdebug("selfid(leader) %" PRIu64 " MsgAppResp msg.from %" PRIu64
+            logdebug("selfid(leader) %" PRIu64 
+                    " MsgAppResp msg.from %" PRIu64
                     " msg.index %" PRIu64 " reject %d rsp_msg_type %d", 
                     raft_impl.getSelfId(), msg.from(), msg.index(), 
                     static_cast<int>(msg.reject()), 
@@ -356,7 +378,8 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
             // collect heartbeat resp
 
             bool update = raft_impl.updateReplicateState(
-                    msg.from(), msg.reject(), msg.reject_hint(), msg.index());
+                    msg.from(), msg.reject(), 
+                    msg.reject_hint(), msg.index());
             if (true == update) {
                 rsp_msg_type = MessageType::MsgHeartbeat;
             }
@@ -645,7 +668,8 @@ RaftImpl::produceRsp(
         logdebug("MsgHeartbeatResp term %" PRIu64 " req_msg.from(leader) %"
                 PRIu64 " prev_index %" PRIu64 " prev_log_term %" PRIu64 
                 " reject %d next_index %" PRIu64 , 
-                term_, req_msg.from(), req_msg.index(), req_msg.log_term(), 
+                term_, req_msg.from(), req_msg.index(), 
+                req_msg.log_term(), 
                 static_cast<int>(rsp_msg->reject()), rsp_msg->index());
     }
         break;
@@ -863,10 +887,10 @@ bool RaftImpl::isUpToDate(
     return false;
 }
 
-void RaftImpl::appendLogs(gsl::array_view<const Entry*> entries)
+int RaftImpl::appendLogs(gsl::array_view<const Entry*> entries)
 {
     if (size_t(0) == entries.length()) {
-        return ; // do nothing;
+        return 0; // do nothing;
     }
 
     assert(nullptr != entries[0]);
@@ -881,10 +905,10 @@ void RaftImpl::appendLogs(gsl::array_view<const Entry*> entries)
         assert(nullptr != logs_.back());
     }
 
-    return ;
+    return entries.length();
 }
 
-void RaftImpl::appendEntries(
+int RaftImpl::appendEntries(
         uint64_t prev_log_index, 
         uint64_t prev_log_term, 
         uint64_t leader_commited_index, 
@@ -894,7 +918,7 @@ void RaftImpl::appendEntries(
     assert(leader_commited_index >= commited_index_);
 
     if (!isMatch(prev_log_index, prev_log_term)) {
-        return ;
+        return -1;
     }
 
     // match
@@ -906,10 +930,10 @@ void RaftImpl::appendEntries(
     assert(0ull == conflict_index || commited_index_ < conflict_index);
 
     auto new_entries = shrinkEntries(conflict_index, entries);
-    appendLogs(new_entries);
+    int append_count = appendLogs(new_entries);
 
     updateFollowerCommitedIndex(leader_commited_index);
-    return ;
+    return append_count;
 }
 
 int RaftImpl::checkAndAppendEntries(
@@ -930,7 +954,7 @@ int RaftImpl::checkAndAppendEntries(
                 make_unique<Entry>(*entries[idx]));
         assert(nullptr != logs_.back());
         logs_.back()->set_term(term_);
-        logs_.back()->set_index(last_index + 1 + idx);
+        logs_.back()->set_index(last_index + 1ull + idx);
     }
 
     // TODO: find a way to store logs_ to disk
@@ -984,27 +1008,89 @@ void RaftImpl::setVoteFor(bool reset, uint64_t candidate)
 uint64_t RaftImpl::assignStoreSeq(uint64_t index)
 {
     auto seq = ++store_seq_;
-    pending_store_[index] = seq;
-    logdebug("index %" PRIu64 " assigned store_seq %" PRIu64, 
-            index, seq);
-    return seq;
-}
-
-uint64_t RaftImpl::pendingStoreSeq(uint64_t index) const
-{
-    if (pending_store_.end() != pending_store_.find(index)) {
-        logdebug("index %" PRIu64 " pending store seq %" PRIu64, 
-                index, pending_store_.at(index));
-        return pending_store_.at(index);
+    if (0ull == index) {
+        pending_meta_seq_ = seq;
+    }
+    else {
+        pending_log_idx_ = min(pending_log_idx_, index);
+        pending_log_seq_ = seq;
     }
 
-    return 0ull;
+    logdebug("selfid %" PRIu64 " index %" PRIu64 
+            " pending_meta_seq_ %" PRIu64 
+            " pending_log_idx_ %" PRIu64 " pending_log_seq_ %" PRIu64, 
+            getSelfId(), index, pending_meta_seq_, 
+            pending_log_idx_, pending_log_seq_);
+    return seq;
+//    auto seq = ++store_seq_;
+//    pending_store_[index] = seq;
+//    if (0ull != index) {
+//        // normal log index
+//        // => truncate any pending store seq with index > $index;
+//        pending_store_.erase(
+//                pending_store_.upper_bound(index), pending_store_.end());
+//    }
+//    logdebug("index %" PRIu64 " assigned store_seq %" PRIu64, 
+//            index, seq);
+//    return seq;
 }
 
+std::tuple<uint64_t, uint64_t, uint64_t>
+RaftImpl::getStoreSeq(uint64_t index) const
+{
+    logdebug("selfid %" PRIu64 " index %" PRIu64 
+            " pending_meta_seq_ %" PRIu64 
+            " pending_log_idx_ %" PRIu64 " pending_log_seq_ %" PRIu64, 
+            getSelfId(), index, pending_meta_seq_, 
+            pending_log_idx_, pending_log_seq_);
+
+    return make_tuple(
+            pending_meta_seq_, pending_log_idx_, pending_log_seq_);
+}
+
+void RaftImpl::commitedStoreSeq(
+        uint64_t meta_seq, uint64_t log_idx, uint64_t log_seq) 
+{
+    logdebug("selfid %" PRIu64 
+            " meta_seq %" PRIu64 " log_idx %" PRIu64 
+            " log_seq %" PRIu64 
+            " pending_meta_seq_ %" PRIu64 " pending_log_idx_ %"
+            PRIu64 " pending_log_seq_ %" PRIu64, 
+            getSelfId(), meta_seq, log_idx, log_seq, 
+            pending_meta_seq_, pending_log_idx_, 
+            pending_log_seq_);
+    if (meta_seq == pending_meta_seq_) {
+        pending_meta_seq_ = 0ull; // reset
+    }
+
+    if (log_idx == pending_log_idx_ && 
+            log_seq == pending_log_seq_) {
+        pending_log_idx_ = 0ull;
+        pending_log_seq_ = 0ull;
+    }
+}
+
+//uint64_t RaftImpl::pendingStoreSeq(uint64_t index) const
+//{
+//    if (pending_store_.end() != pending_store_.find(index)) {
+//        logdebug("index %" PRIu64 " pending store seq %" PRIu64, 
+//                index, pending_store_.at(index));
+//        return pending_store_.at(index);
+//    }
+//
+//    return 0ull;
+//}
+//
 
 void RaftImpl::updateActiveTime(
         std::chrono::time_point<std::chrono::system_clock> time_now)
 {
+    {
+        auto at_str = format_time(active_time_);
+        auto time_str = format_time(time_now);
+        logdebug("update active_time_ %s to time_now %s", 
+                at_str.c_str(), time_str.c_str());
+    }
     active_time_ = time_now;
 }
 
@@ -1085,6 +1171,44 @@ const Entry* RaftImpl::getLogEntry(uint64_t log_index) const
     assert(log_index == logs_[idx]->index());
     assert(0 < logs_[idx]->term());
     return logs_[idx].get();
+}
+
+std::vector<std::unique_ptr<raft::Entry>>
+RaftImpl::getLogEntriesAfter(uint64_t log_index) const
+{
+    vector<unique_ptr<Entry>> vec_entries;
+    uint64_t base_index = 0ull;
+    uint64_t last_index = 0ull;
+    tie(base_index, last_index) = getInMemIndex();
+    assert(base_index <= log_index + 1ull);
+    if (log_index >= last_index) {
+        return vec_entries;
+    }
+
+    assert(0ull < last_index - log_index);
+    vec_entries.reserve(last_index - log_index);
+
+    for (; log_index < last_index; ++log_index) {
+        auto index = log_index + 1;
+        auto entry = getLogEntry(index);
+        assert(nullptr != entry);
+        assert(index == entry->index());
+        vec_entries.emplace_back(
+                make_unique<Entry>(*entry));
+    }
+
+    return vec_entries;
+}
+
+std::unique_ptr<raft::HardState>
+RaftImpl::getCurrentHardState() const 
+{
+    auto hs = make_unique<HardState>();
+    assert(nullptr != hs);
+    hs->set_term(term_);
+    hs->set_vote(vote_for_);
+    hs->set_commit(commited_index_);
+    return hs;
 }
 
 uint64_t RaftImpl::getLogTerm(uint64_t log_index) const
@@ -1202,7 +1326,8 @@ void RaftImpl::updateFollowerCommitedIndex(uint64_t leader_commited_index)
     return ;
 }
 
-uint64_t RaftImpl::findConflict(gsl::array_view<const Entry*> entries) const
+uint64_t 
+RaftImpl::findConflict(gsl::array_view<const Entry*> entries) const
 {
     if (size_t{0} == entries.length() || true == logs_.empty()) {
         return 0ull;
@@ -1284,7 +1409,8 @@ void RaftImpl::becomeCandidate()
 
     // raft paper
     // Candidates 5.2
-    // On conversion to candidate or election timeout elapse, start election:
+    // On conversion to candidate or election timeout elapse, 
+    // start election:
     beginVote();
     return ;
 }
@@ -1301,7 +1427,6 @@ void RaftImpl::becomeLeader()
     // matchIndex[]
     //   for each server, index of highest log entry known to be 
     //   replicated on server(initailzed to 0, increases monotonically)
-    
     setLeader(false, selfid_);
     assert(selfid_ == leader_id_);
     next_indexes_.clear();
@@ -1340,10 +1465,17 @@ void RaftImpl::updateHeartbeatTime(
         std::chrono::time_point<
             std::chrono::system_clock> next_hb_time)
 {
-    // TODO: format print time point;
-    logdebug("update ");
+    {
+        auto hb_str = format_time(hb_time_);
+        auto next_hb_str = format_time(next_hb_time);
+        logdebug("selfid %" PRIu64 
+                " update hb_time_ %s to next_hb_time %s", 
+                getSelfId(), 
+                hb_str.c_str(), next_hb_str.c_str());
+    }
     hb_time_ = next_hb_time;
 }
+
 
 } // namespace raft
 

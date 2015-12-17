@@ -2,6 +2,7 @@
 
 
 #include <unistd.h>
+#include <chrono>
 #include <iostream>
 #include <vector>
 #include <cstdio>
@@ -34,6 +35,10 @@ main ( int argc, char *argv[] )
 
     vector<int> vec(10, 0);
     gsl::array_view<int> vec_view{&vec[0], vec.size()};
+
+    auto time_now = chrono::system_clock::now();
+    auto time_str = format_time(time_now);
+    printf ( "time_now %s\n", time_str.c_str() );
 
     return EXIT_SUCCESS;
 }				/* ----------  end of function main  ---------- */

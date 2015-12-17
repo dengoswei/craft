@@ -29,7 +29,8 @@ private:
 
     using TimeoutHandler = 
         std::function<MessageType(
-                RaftImpl&, std::chrono::time_point<std::chrono::system_clock>)>;
+                RaftImpl&, 
+                std::chrono::time_point<std::chrono::system_clock>)>;
 
     using StepMessageHandler = 
         std::function<MessageType(RaftImpl&, const Message&)>;
@@ -67,8 +68,8 @@ public:
     bool isUpToDate(
             uint64_t peer_log_term, uint64_t peer_max_index);
 
-    void appendLogs(gsl::array_view<const Entry*> entries);
-    void appendEntries(
+    int appendLogs(gsl::array_view<const Entry*> entries);
+    int appendEntries(
             uint64_t prev_log_index, 
             uint64_t prev_log_term, 
             uint64_t leader_commited_index, 
@@ -77,6 +78,12 @@ public:
     int checkAndAppendEntries(
             uint64_t prev_log_index, 
             gsl::array_view<const Entry*> entries);
+
+    std::vector<std::unique_ptr<raft::Entry>>
+        getLogEntriesAfter(uint64_t log_index) const;
+
+    std::unique_ptr<raft::HardState>
+        getCurrentHardState() const;
 
 public:
 
@@ -116,8 +123,15 @@ public:
 
     void setLeader(bool reset, uint64_t leader_id);
 
-    uint64_t pendingStoreSeq(uint64_t index) const;
     uint64_t assignStoreSeq(uint64_t index);
+
+    // meta_seq, log_idx, log_seq
+    std::tuple<uint64_t, uint64_t, uint64_t> 
+        getStoreSeq(uint64_t index) const;
+
+    // commited
+    void commitedStoreSeq(
+            uint64_t meta_seq, uint64_t log_idx, uint64_t log_seq);
 
     int getElectionTimout() const {
         return election_timeout_.count();
@@ -132,6 +146,7 @@ public:
     uint64_t getBaseLogTerm() const;
     uint64_t getBaseLogIndex() const;
 
+    // base_index, last_index
     std::tuple<uint64_t, uint64_t> getInMemIndex() const;
 
     const Entry* getLogEntry(uint64_t log_index) const;
@@ -163,6 +178,7 @@ public:
             std::chrono::time_point<
                 std::chrono::system_clock> next_hb_time);
 
+
 private:
     RaftRole role_ = RaftRole::FOLLOWER;
     TimeoutHandler timeout_handler_;
@@ -181,6 +197,9 @@ private:
     std::deque<std::unique_ptr<Entry>> logs_;
 
     uint64_t store_seq_ = 0;
+    uint64_t pending_meta_seq_ = 0;
+    uint64_t pending_log_idx_ = 0;
+    uint64_t pending_log_seq_ = 0;
     std::map<uint64_t, uint64_t> pending_store_;
 
     std::chrono::milliseconds election_timeout_;

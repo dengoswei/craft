@@ -137,7 +137,10 @@ TEST(TestRaftAppendEntries, RepeatAppendTest)
         assert(size_t{1} == vec_msg.size());
 
         apply_until(map_raft, move(vec_msg));
-        assert(fix_term == raft->getTerm());
+        hassert(fix_term == raft->getTerm(), 
+                "i %d fix_term %" PRIu64 " term %" PRIu64, 
+                i, fix_term, raft->getTerm());
+
         const auto index = 1ull + i;
         for (const auto& id_raft : map_raft) {
             hassert(index == id_raft.second->getCommitedIndex(), 
@@ -185,7 +188,10 @@ TEST(TestRaftAppendEntries, RepeatBatchAppendTest)
         assert(vec_value.size() == static_cast<size_t>((1 + i) * (1 + i)));
         uint64_t prev_index = raft->getLastLogIndex();
         apply_until(map_raft, move(vec_msg));
-        assert(fix_term == raft->getTerm());
+
+        hassert(fix_term == raft->getTerm(), 
+                "i %d fix_term %" PRIu64 " term %" PRIu64, 
+                i, fix_term, raft->getTerm());
         assert(raft->getLastLogIndex() == prev_index + vec_value.size());
         assert(raft->getCommitedIndex() == raft->getLastLogIndex());
     }

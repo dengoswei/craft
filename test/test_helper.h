@@ -60,5 +60,9 @@ batchBuildMsgProp(
         uint64_t term, uint64_t prev_index, 
         int batch_size, int entries_size);
 
+        
+std::unique_ptr<raft::Message>
+    buildMsgNull(uint64_t to_id, uint64_t logid, uint64_t term);
+
 
 } // namespace test

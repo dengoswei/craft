@@ -45,6 +45,22 @@ void log_nothing(const char* /* format */, ...) {
 namespace raft {
 
 
+inline std::string 
+format_time(std::chrono::time_point<std::chrono::system_clock> tp)
+{
+    auto ttp = std::chrono::system_clock::to_time_t(tp);
+    
+    std::string str(26, '\0');
+    ctime_r(&ttp, &str[0]);
+    auto str_len = strlen(str.data());
+    assert(0 < str_len);
+    // remove the added new line
+    str[str_len-1] = '\0';
+    str.resize(str_len);
+    return str;
+}
+
+
 inline int random_int(int min, int max)
 {
     // mark as thread local ?
