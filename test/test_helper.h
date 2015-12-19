@@ -6,6 +6,7 @@
 #include <vector>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <stdint.h>
 
 
@@ -88,19 +89,15 @@ class StorageHelper {
 
 public:
     int write(
-            uint64_t meta_seq, 
             std::unique_ptr<raft::HardState>&& hs, 
-            uint64_t log_seq, 
             std::vector<std::unique_ptr<raft::Entry>>&& vec_entries);
 
     std::unique_ptr<raft::Entry> read(uint64_t log_index);
 
 private:
-    int write(uint64_t meta_seq, std::unique_ptr<raft::HardState>&& hs);
+    int write(std::unique_ptr<raft::HardState>&& hs);
 
-    int write(
-            uint64_t log_seq, 
-            std::vector<std::unique_ptr<raft::Entry>>&& vec_entries);
+    int write(std::vector<std::unique_ptr<raft::Entry>>&& vec_entries);
 
 private:
     std::mutex mutex_;
@@ -130,7 +127,6 @@ private:
     std::mutex msg_queue_mutex_;
     std::deque<std::unique_ptr<raft::Message>> msg_queue_;
 };
-
 
 std::unique_ptr<raft::Message> buildMsgProp(
         uint64_t logid, uint64_t leader_id, 

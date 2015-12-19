@@ -1,5 +1,6 @@
 #include "gtest/gtest.h"
 #include "raft_impl.h"
+#include "raft.h"
 #include "utils.h"
 #include "raft.pb.h"
 #include "test_helper.h"
@@ -35,7 +36,79 @@ void updateAllActiveTime(
     }
 }
 
-TEST(TestRaftAppendEntries, SimpleAppendTest)
+void updateAllActiveTime(
+        std::map<uint64_t, std::unique_ptr<raft::Raft>>& map_raft)
+{
+    auto tp = chrono::system_clock::now();
+    for (auto& id_raft : map_raft) {
+        auto& raft = id_raft.second;
+        assert(nullptr != raft);
+        assert(id_raft.first == raft->GetSelfId());
+        raft->ReflashTimer(tp);
+    }
+}
+
+std::vector<std::string> generatePropValue(int entries_size)
+{
+    assert(0 < entries_size);
+    RandomStrGen<100, 200> str_gen;
+
+    vector<string> vec_value;
+    vec_value.reserve(entries_size);
+    for (auto i = 0; i < entries_size; ++i) {
+        vec_value.emplace_back(str_gen.Next());
+    }
+
+    return vec_value;
+}
+
+std::vector<gsl::cstring_view<>>
+buildPropValueView(const std::vector<std::string>& vec_value)
+{
+    vector<gsl::cstring_view<>> vec_view;
+    vec_view.reserve(vec_value.size());
+    for (const auto& value : vec_value) {
+        vec_view.emplace_back(value.data(), value.size());
+    }
+    return vec_view;
+}
+
+void checkValue(
+        uint64_t base_index, 
+        const std::vector<std::string>& vec_value, 
+        StorageHelper& store)
+{
+    auto log_index = base_index;
+    for (auto& value : vec_value) {
+        auto entry = store.read(log_index);
+        hassert(nullptr != entry, "log_index %" PRIu64, log_index);
+
+//        logdebug("index %" PRIu64 " term %" PRIu64 
+//                " seq %" PRIu64 " data %s", 
+//                entry->index(), entry->term(), entry->seq(), 
+//                entry->data().c_str());
+        assert(entry->type() == EntryType::EntryNormal);
+        assert(entry->index() == log_index);
+        assert(0ull < entry->term());
+        assert(0ull < entry->seq());
+        assert(entry->data() == value);
+
+        ++log_index;
+    }
+}
+
+void checkValue(
+        uint64_t base_index, 
+        const std::vector<std::string>& vec_value, 
+        std::map<uint64_t, std::unique_ptr<StorageHelper>>& map_store)
+{
+    for (auto& id_store : map_store) {
+        assert(nullptr != id_store.second);
+        checkValue(base_index, vec_value, *(id_store.second));
+    }
+}
+
+TEST(TestRaftAppendEntriesImpl, SimpleAppendTest)
 {
     uint64_t logid = 0ull;
     set<uint64_t> group_ids;
@@ -118,22 +191,22 @@ TEST(TestRaftAppendEntries, SimpleAppendTest)
     assert(true == vec_msg.empty());
 }
 
-TEST(TestRaftAppendEntries, RepeatAppendTest)
+TEST(TestRaftAppendEntriesImpl, RepeatAppendTest)
 {
     uint64_t logid = 0ull;
     set<uint64_t> group_ids;
     map<uint64_t, unique_ptr<raft::RaftImpl>> map_raft;
 
     uint64_t leader_id = 1ull;
-    tie(logid, group_ids, map_raft) = comm_init(leader_id, 10, 20);
+    tie(logid, group_ids, map_raft) = comm_init(leader_id, 30, 40);
 
     auto& raft = map_raft[leader_id];
     assert(nullptr != raft);
     assert(RaftRole::LEADER == raft->getRole());
 
     // repeat test count 100
-    RandomStrGen<100, 200> str_gen;
     const auto fix_term = raft->getTerm();
+
     for (int i = 0; i < 100; ++i) {
         vector<unique_ptr<Message>> vec_msg;
         string value;
@@ -148,10 +221,14 @@ TEST(TestRaftAppendEntries, RepeatAppendTest)
         assert(size_t{1} == vec_msg.size());
 
         updateAllActiveTime(map_raft);
+        auto prev_tp = chrono::system_clock::now();
         apply_until(map_raft, move(vec_msg));
+        auto now_tp = chrono::system_clock::now();
+        auto duration = 
+            chrono::duration_cast<chrono::milliseconds>(now_tp - prev_tp);
         hassert(fix_term == raft->getTerm(), 
-                "i %d fix_term %" PRIu64 " term %" PRIu64, 
-                i, fix_term, raft->getTerm());
+                "i %d fix_term %" PRIu64 " term %" PRIu64 " cost time %d", 
+                i, fix_term, raft->getTerm(), duration.count());
 
         const auto index = 1ull + i;
         for (const auto& id_raft : map_raft) {
@@ -181,19 +258,17 @@ TEST(TestRaftAppendEntries, RepeatBatchAppendTest)
     map<uint64_t, unique_ptr<raft::RaftImpl>> map_raft;
 
     uint64_t leader_id = 1ull;
-    tie(logid, group_ids, map_raft) = comm_init(leader_id, 10, 20);
+    tie(logid, group_ids, map_raft) = comm_init(leader_id, 30, 40);
 
     auto& raft = map_raft[leader_id];
     assert(nullptr != raft);
     assert(RaftRole::LEADER == raft->getRole());
 
-
-    RandomStrGen<100, 200> str_gen;
     const auto fix_term = raft->getTerm();
     for (int i = 0; i < 10; ++i) {
         auto vec_msg = batchBuildMsgProp(
                 logid, leader_id, raft->getTerm(), 
-                raft->getLastLogIndex(), 1 + i, 1 + i); 
+                raft->getLastLogIndex(), 1 + i, min(1 + i, 10)); 
         assert(vec_msg.size() == static_cast<size_t>(1 + i));
 
         auto vec_value = extract_value(vec_msg);
@@ -210,4 +285,92 @@ TEST(TestRaftAppendEntries, RepeatBatchAppendTest)
 }
 
 
+TEST(TestRaftAppendEntries, SimpleAppendTest)
+{
+    SendHelper sender;
+    uint64_t logid = 0ull;
+    set<uint64_t> group_ids;
+    map<uint64_t, unique_ptr<StorageHelper>> map_store;
+    map<uint64_t, unique_ptr<Raft>> map_raft;
+    uint64_t leader_id = 1ull;
+
+    tie(logid, group_ids, map_store, map_raft) = 
+        comm_init(leader_id, sender, 50, 100);
+
+    auto& raft = map_raft[leader_id];
+    assert(nullptr != raft);
+    assert(true == raft->IsLeader());
+
+    auto vec_value = generatePropValue(1);
+    auto vec_view = buildPropValueView(vec_value);
+
+    // 1.
+    raft::ErrorCode err_code = raft::ErrorCode::OK;
+    uint64_t assigned_log_index = 0ull;
+    tie(err_code, assigned_log_index) = raft->Propose(0ull, vec_view);
+    assert(ErrorCode::OK == err_code);
+    assert(1ull == assigned_log_index);
+
+    assert(false == sender.empty());
+    // 2. followers accept MsgApp
+    auto apply_count = sender.apply(map_raft);
+    assert(size_t{2} == apply_count);
+
+    assert(false == sender.empty());
+    // 3.  leader collect MsgAppResp
+    //     => send back empty MsgApp to notify commited_index_
+    apply_count = sender.apply(map_raft);
+    assert(size_t{2} == apply_count);
+
+    assert(false == sender.empty());
+    // 4. followers recv empty MsgApp => update commited_index_
+    apply_count = sender.apply(map_raft);
+    assert(size_t{2} == apply_count);
+
+    assert(true == sender.empty());
+
+    // check
+    checkValue(1ull, vec_value, map_store);
+}
+
+TEST(TestRaftAppendEntries, RepeatAppendTest)
+{
+    SendHelper sender;
+    uint64_t logid = 0ull;
+    set<uint64_t> group_ids;
+    map<uint64_t, unique_ptr<StorageHelper>> map_store;
+    map<uint64_t, unique_ptr<Raft>> map_raft;
+    uint64_t leader_id = 1ull;
+
+    tie(logid, group_ids, map_store, map_raft) = 
+        comm_init(leader_id, sender, 50, 100);
+
+    auto& raft = map_raft[leader_id];
+    assert(nullptr != raft);
+    assert(true == raft->IsLeader());
+
+    for (int i = 0; i < 100; ++i) {
+        auto vec_value = generatePropValue(min(i + 1, 10));
+        auto vec_view = buildPropValueView(vec_value);
+
+        updateAllActiveTime(map_raft);
+
+        raft::ErrorCode err_code = raft::ErrorCode::OK;
+        uint64_t assigned_log_index = 0ull;
+        tie(err_code, assigned_log_index) = raft->Propose(0ull, vec_view);
+        assert(ErrorCode::OK == err_code);
+        assert(0ull < assigned_log_index);
+        logdebug("i %d err_code %d vec_value.size %zu "
+                "assigned_log_index %" PRIu64, 
+                i, static_cast<int>(err_code), vec_value.size(), 
+                assigned_log_index);
+
+        assert(false == sender.empty());
+        sender.apply_until(map_raft);
+        assert(true == sender.empty());
+ 
+        // check
+        checkValue(assigned_log_index, vec_value, map_store);
+    }
+}
 

@@ -20,8 +20,8 @@ struct RaftCallBack {
     std::function<std::unique_ptr<raft::Entry>(uint64_t)> read;
 
     std::function<int(
-            uint64_t, std::unique_ptr<raft::HardState>&&, 
-            uint64_t, std::vector<std::unique_ptr<raft::Entry>>&&)> write;
+            std::unique_ptr<raft::HardState>&&, 
+            std::vector<std::unique_ptr<raft::Entry>>&&)> write;
 
     std::function<int(std::vector<std::unique_ptr<raft::Message>>&&)> send;
 };
@@ -41,7 +41,7 @@ public:
 
     std::tuple<raft::ErrorCode, uint64_t>
         Propose(uint64_t index, 
-                gsl::array_view<gsl::cstring_view<>> entries);
+                const std::vector<gsl::cstring_view<>>& vec_view);
 
     // err_code, commited_index, entry
     std::tuple<raft::ErrorCode, uint64_t, std::unique_ptr<Entry>> 
@@ -50,7 +50,7 @@ public:
     // err_code, log_index
     std::tuple<raft::ErrorCode, uint64_t>
         TrySet(uint64_t index, 
-                gsl::array_view<gsl::cstring_view<>> entries);
+                const std::vector<gsl::cstring_view<>>& entries);
 
     void Wait(uint64_t index);
     bool WaitFor(uint64_t index, const std::chrono::milliseconds timeout);
@@ -67,12 +67,16 @@ public:
     bool IsLeader();
     bool IsCandidate();
 
+    bool IsPending();
+
     raft::ErrorCode TryToBecomeLeader();
     raft::ErrorCode MakeTimeoutHeartbeat();
 
     uint64_t GetTerm();
 
     // only for test
+    void ReflashTimer(
+            std::chrono::time_point<std::chrono::system_clock> time_now);
 
 private:
     bool checkRole(raft::RaftRole role);

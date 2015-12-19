@@ -4,7 +4,7 @@ CXXFLAGS += -g -Wall -Wextra -D TEST_DEBUG
 
 
 
-TESTS = utils_test leader_election_test append_entries_test
+TESTS = utils_test leader_election_test append_entries_test store_test
 
 INCLS += -I../ -I../craftpb 
 INCLS += -I/Users/dengoswei/open-src/github.com/microsoft/GSL/include

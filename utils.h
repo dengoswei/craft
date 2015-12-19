@@ -1,6 +1,8 @@
 #pragma once
 
 #include <random>
+#include <string>
+#include <chrono>
 #include <cstdio>
 #include <cassert>
 #include <inttypes.h>
@@ -122,6 +124,48 @@ public:
 private:
     RandomIntGen<std::mt19937, int, iMin, iMax> m_tRLen;
     RandomIntGen<std::mt19937, int, 0, sizeof(DICTIONARY)-2> m_tRIdx;
+};
+
+class TickTime {
+public:
+    template <typename ...Args>
+    TickTime(const char* format, Args&&... args)
+        : start_(std::chrono::system_clock::now())
+    {
+        msg_.resize(64, 0);
+        snprintf(&msg_[0], msg_.size(), 
+                format, std::forward<Args>(args)...);
+        msg_.resize(strlen(msg_.data()));
+    }
+
+    ~TickTime()
+    {
+        if (true == has_print_) {
+            return ;
+        }
+    
+        print();
+    }
+
+    void print()
+    {
+         auto duration = 
+            std::chrono::duration_cast<
+                std::chrono::milliseconds>(
+                        std::chrono::system_clock::now() - start_);
+
+         if (0 < duration.count()) {
+             logdebug("cost time %d = %s", duration.count(), msg_.c_str());
+         }
+         
+         has_print_ = true;
+         assert(20 > duration.count());
+    }
+
+private:
+    std::chrono::time_point<std::chrono::system_clock> start_;
+    std::string msg_;
+    bool has_print_ = false;
 };
 
 

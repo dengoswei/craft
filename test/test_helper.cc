@@ -2,6 +2,7 @@
 #include "raft_impl.h"
 #include "raft.h"
 #include "raft.pb.h"
+#include "utils.h"
 
 
 
@@ -25,8 +26,22 @@ std::vector<std::unique_ptr<raft::Message>>
         auto& raft = map_raft[msg->to()];
         assert(nullptr != raft);
         
-        auto rsp_msg_type = raft->step(*msg);
-        auto vec_rsp_msg = raft->produceRsp(*msg, rsp_msg_type);
+        MessageType rsp_msg_type = MessageType::MsgNull;
+        TickTime ta("%s msg type %d", __func__, static_cast<int>(msg->type()));
+        {
+            TickTime t("step msg type %d entries_size %d",
+                    static_cast<int>(msg->type()), 
+                    msg->entries_size());
+            rsp_msg_type = raft->step(*msg);
+        }
+
+        vector<unique_ptr<Message>> vec_rsp_msg;
+        {
+            TickTime t("produceRsp msg type %d rsp_msg_type %d", 
+                    static_cast<int>(msg->type()), 
+                    static_cast<int>(rsp_msg_type));
+            vec_rsp_msg = raft->produceRsp(*msg, rsp_msg_type);
+        }
         for (auto& rsp_msg : vec_rsp_msg) {
             assert(nullptr != rsp_msg);
             assert(msg->to() == rsp_msg->from());
@@ -44,8 +59,16 @@ apply_until(
         std::vector<std::unique_ptr<raft::Message>>&& vec_msg)
 {
     while (false == vec_msg.empty()) {
+        for (auto& msg : vec_msg) {
+            assert(nullptr != msg);
+            logdebug("TEST-INFO msg from %" PRIu64 
+                    " to %" PRIu64 " term %" PRIu64 " type %d", 
+                    msg->from(), msg->to(), msg->term(), 
+                    static_cast<int>(msg->type()));
+        }
+
+        TickTime t("vec_msg.size %zu", vec_msg.size());
         vec_msg = apply(map_raft, vec_msg);
-        logdebug(" new vec_msg.size %zu", vec_msg.size());
     }
 }
 
@@ -223,11 +246,10 @@ comm_init(
         };
 
         callback.write = [=](
-                uint64_t meta_seq, unique_ptr<HardState>&& hs, 
-                uint64_t log_seq, vector<unique_ptr<Entry>>&& vec_entries) {
+                unique_ptr<HardState>&& hs, 
+                vector<unique_ptr<Entry>>&& vec_entries) {
             assert(nullptr != store);
-            return store->write(
-                    meta_seq, move(hs), log_seq, move(vec_entries));
+            return store->write(move(hs), move(vec_entries));
         };
 
         callback.send = [&](vector<unique_ptr<Message>>&& vec_msg) {
@@ -253,48 +275,57 @@ comm_init(
 
 
 int StorageHelper::write(
-        uint64_t meta_seq, 
         std::unique_ptr<raft::HardState>&& hs)
 {
     // hold lock;
-    if (max_meta_seq_ < meta_seq) {
-        meta_info_ = move(hs);
-        max_meta_seq_ = meta_seq;
+    if (nullptr != hs) {
+        if (max_meta_seq_ < hs->seq()) {
+            max_meta_seq_ = hs->seq();
+            meta_info_ = move(hs);
+//            logdebug("meta_info_ term %" PRIu64 
+//                    " vote %" PRIu64 " commit %u" PRIu64 
+//                    " seq %" PRIu64 " max_meta_seq_ %" PRIu64, 
+//                    meta_info_->term(), meta_info_->vote(), 
+//                    meta_info_->commit(), meta_info_->seq(), 
+//                    max_meta_seq_);
+        }
     }
     return 0;
 }
 
 int StorageHelper::write(
-        uint64_t log_seq, 
         std::vector<std::unique_ptr<raft::Entry>>&& vec_entries)
 {
     // hold lock;
-    if (max_log_seq_ < log_seq) {
+    if (false == vec_entries.empty()) {
+        assert(nullptr != vec_entries.front());
         for (auto& entry : vec_entries) {
             assert(nullptr != entry);
-            log_entries_[entry->index()] = move(entry);
-            assert(nullptr == entry);
+            if (max_log_seq_ <= entry->seq()) {
+                // TODO
+//                logdebug("seq %" PRIu64 " index %" PRIu64 " term %" PRIu64, 
+//                        entry->seq(), entry->index(), entry->term());
+                max_log_seq_ = entry->seq();
+                log_entries_[entry->index()] = move(entry);
+                assert(nullptr == entry);
+            }
         }
-
-        max_log_seq_ = log_seq;
     }
 
     return 0;
 }
 
 int StorageHelper::write(
-        uint64_t meta_seq, 
         std::unique_ptr<raft::HardState>&& hs, 
-        uint64_t log_seq, 
         std::vector<std::unique_ptr<raft::Entry>>&& vec_entries)
 {
     lock_guard<mutex> lock(mutex_);
-    auto ret = write(meta_seq, move(hs));
+    auto ret = write(move(hs));
     if (0 != ret) {
         return ret;
     }
 
-    return write(log_seq, move(vec_entries));
+    return write(move(vec_entries));
 }
 
 std::unique_ptr<raft::Entry> StorageHelper::read(uint64_t log_index)
@@ -311,6 +342,8 @@ std::unique_ptr<raft::Entry> StorageHelper::read(uint64_t log_index)
     auto& entry = log_entries_[log_index];
     assert(nullptr != entry);
     assert(entry->index() == log_index);
+//    logdebug("seq %" PRIu64 " index %" PRIu64 " term %" PRIu64, 
+//            entry->seq(), entry->index(), entry->term());
     return make_unique<Entry>(*entry);
 }
 

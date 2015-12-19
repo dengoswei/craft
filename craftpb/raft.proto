@@ -12,6 +12,7 @@ enum ErrorCode {
     BUSY = -100;
 
     INVALID_INDEX = -200;
+    BIG_BATCH = -201;
 
     STORAGE_READ_ERROR = -300;
     STORAGE_WRITE_ERROR = -310;

@@ -57,6 +57,7 @@ bool hasReplicateOnMajority(
 std::vector<const Entry*> make_vec_entries(const raft::Message& msg)
 {
     vector<const Entry*> vec_entries(msg.entries_size(), nullptr);
+
     for (int idx = 0; idx < msg.entries_size(); ++idx) {
         vec_entries[idx] = &msg.entries(idx);
         assert(nullptr != vec_entries[idx]);
@@ -223,6 +224,7 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
             auto append_count = 
                 raft_impl.appendEntries(
                     msg.index(), msg.log_term(), msg.commit(), entries);
+
             auto store_seq = 0 < append_count ? 
                 raft_impl.assignStoreSeq(msg.index() + 1ull) : 
                 0ull;
@@ -235,7 +237,6 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
                     vec_entries.size(), append_count, store_seq);
 
             raft_impl.updateActiveTime(time_now);
-
             if (0 != msg.entries_size()) { 
                 rsp_msg_type = MessageType::MsgAppResp;
             }
@@ -566,6 +567,8 @@ RaftImpl::produceRsp(
         if (0ull == req_msg.from()) {
             if (MessageType::MsgProp == req_msg.type()) {
                 vec_msg = batchBuildMsgAppUpToDate(MAX_BATCH_SIZE);
+                logdebug("MsgApp batchBuildMsgAppUpToDate "
+                        "vec_msg.size %zu", vec_msg.size());
             }
             else {
                 vec_msg = batchBuildMsgApp(MAX_BATCH_SIZE);
@@ -764,6 +767,8 @@ RaftImpl::batchBuildMsgAppUpToDate(size_t max_batch_size)
     vector<std::unique_ptr<Message>> vec_msg;
     const uint64_t prev_last_index = next_indexes_[selfid_];
     uint64_t last_index = getLastLogIndex();
+    logdebug("prev_last_index %" PRIu64 " last_index %" PRIu64, 
+            prev_last_index, last_index);
     if (prev_last_index == last_index + 1ull) {
         return vec_msg; // already up to date
     }
@@ -771,10 +776,19 @@ RaftImpl::batchBuildMsgAppUpToDate(size_t max_batch_size)
     assert(prev_last_index < last_index + 1ull);
     for (auto peer_id : peer_ids_) {
         assert(next_indexes_.end() != next_indexes_.find(peer_id));
+        logdebug("peer_id %" PRIu64 " prev_last_index %" PRIu64
+                " next_indexes_ %" PRIu64 " vec_msg.size %zu", 
+                peer_id, prev_last_index, next_indexes_[peer_id], 
+                vec_msg.size());
         if (prev_last_index == next_indexes_[peer_id]) {
             auto msg_app = buildMsgApp(
                     peer_id, next_indexes_[peer_id], max_batch_size);
             if (nullptr != msg_app) {
+                logdebug("peer_id %" PRIu64 " prev_last_index %" PRIu64
+                        " next_index %" PRIu64 " max_batch_size %zu"
+                        " entries_size %d", 
+                        peer_id, prev_last_index, next_indexes_[peer_id], 
+                        max_batch_size, msg_app->entries_size());
                 vec_msg.emplace_back(move(msg_app));
             }
             assert(nullptr == msg_app);
@@ -1166,7 +1180,6 @@ RaftImpl::getLogEntriesAfter(uint64_t log_index) const
 
     assert(0ull < last_index - log_index);
     vec_entries.reserve(last_index - log_index);
-
     for (; log_index < last_index; ++log_index) {
         auto index = log_index + 1;
         auto entry = getLogEntry(index);
@@ -1174,6 +1187,8 @@ RaftImpl::getLogEntriesAfter(uint64_t log_index) const
         assert(index == entry->index());
         vec_entries.emplace_back(
                 make_unique<Entry>(*entry));
+        assert(nullptr != vec_entries.back());
+        vec_entries.back()->set_seq(pending_log_seq_);
     }
 
     return vec_entries;
@@ -1187,6 +1202,7 @@ RaftImpl::getCurrentHardState() const
     hs->set_term(term_);
     hs->set_vote(vote_for_);
     hs->set_commit(commited_index_);
+    hs->set_seq(pending_meta_seq_);
     return hs;
 }
 
@@ -1470,6 +1486,30 @@ void RaftImpl::makeHeartbeatTimeout(
 {
     tp -= chrono::milliseconds{getHeartbeatTimeout() + 1};
     updateHeartbeatTime(tp);
+}
+
+std::unique_ptr<raft::HardState>
+RaftImpl::getPendingHardState() const 
+{
+    if (0ull == pending_meta_seq_) {
+        return nullptr;
+    }
+
+    return getCurrentHardState();
+}
+
+std::vector<std::unique_ptr<raft::Entry>>
+RaftImpl::getPendingLogEntries() const
+{
+    if (0ull == pending_log_idx_) {
+        assert(0ull == pending_log_seq_);
+        return vector<unique_ptr<Entry>>{};
+    }
+
+    assert(0ull < pending_log_idx_);
+    assert(0ull < pending_log_seq_);
+
+    return getLogEntriesAfter(pending_log_idx_ - 1ull);
 }
 
 } // namespace raft

@@ -20,7 +20,7 @@ enum class RaftRole : uint8_t {
     FOLLOWER = 3, 
 };
 
-
+extern const size_t MAX_BATCH_SIZE;
 
 // not thread safe
 class RaftImpl {
@@ -84,6 +84,12 @@ public:
 
     std::unique_ptr<raft::HardState>
         getCurrentHardState() const;
+
+    std::unique_ptr<raft::HardState>
+        getPendingHardState() const;
+
+    std::vector<std::unique_ptr<raft::Entry>>
+        getPendingLogEntries() const;
 
     // test helper function
     void makeElectionTimeout(
@@ -209,7 +215,6 @@ private:
     uint64_t pending_meta_seq_ = 0;
     uint64_t pending_log_idx_ = 0;
     uint64_t pending_log_seq_ = 0;
-    std::map<uint64_t, uint64_t> pending_store_;
 
     std::chrono::milliseconds election_timeout_;
     std::chrono::time_point<std::chrono::system_clock> active_time_;

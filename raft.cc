@@ -8,14 +8,15 @@ namespace {
 using namespace raft;
 
 std::unique_ptr<Message> buildPropMsg(
-        uint64_t prev_index, gsl::array_view<gsl::cstring_view<>> entries)
+        uint64_t prev_index, 
+        const std::vector<gsl::cstring_view<>>& entries)
 {
     auto msg = make_unique<Message>();
     assert(nullptr != msg);
 
     msg->set_index(prev_index);
     msg->set_type(MessageType::MsgProp);
-    for (auto idx = size_t{0}; idx < entries.length(); ++idx) {
+    for (auto idx = size_t{0}; idx < entries.size(); ++idx) {
         auto entry = msg->add_entries();
         assert(nullptr != entry);
 
@@ -53,10 +54,6 @@ Raft::~Raft() = default;
 
 raft::ErrorCode Raft::Step(const raft::Message& msg)
 {
-    uint64_t meta_seq = 0ull;
-    uint64_t log_idx = 0ull;
-    uint64_t log_seq = 0ull;
-
     unique_ptr<HardState> hs;
     vector<unique_ptr<Entry>> vec_entries;
     vector<unique_ptr<Message>> vec_rsp;
@@ -71,37 +68,38 @@ raft::ErrorCode Raft::Step(const raft::Message& msg)
 
         auto rsp_msg_type = raft_impl_->step(msg);
         vec_rsp = raft_impl_->produceRsp(msg, rsp_msg_type);
+        logdebug("selfid %" PRIu64 " msg.type %d rsp_msg_type %d "
+                "vec_rsp.size %zu", 
+                GetSelfId(), static_cast<int>(msg.type()), 
+                static_cast<int>(rsp_msg_type), vec_rsp.size());
 
-        tie(meta_seq, log_idx, log_seq) = raft_impl_->getStoreSeq();
-        if (0ull != meta_seq) {
-            hs = raft_impl_->getCurrentHardState();
-            assert(nullptr != hs);
-        }
-
-        if (0ull != log_idx) {
-            vec_entries = raft_impl_->getLogEntriesAfter(log_idx);
-        }
-        else {
-            assert(0ull == log_seq);
-        }
+        hs = raft_impl_->getPendingHardState();
+        vec_entries = raft_impl_->getPendingLogEntries();
     }
 
     // 2.
     int ret = 0;
-    if (0ull != meta_seq || 0 != log_seq) {
+    uint64_t meta_seq = nullptr == hs ? 0ull : hs->seq();
+    uint64_t log_idx = 
+        true == vec_entries.empty() ? 0ull : vec_entries.front()->index();
+    uint64_t log_seq = 
+        true == vec_entries.empty() ? 0ull : vec_entries.front()->seq();
+    if (nullptr != hs || false == vec_entries.empty()) {
         // strictly inc store_seq make-sure no dirty data
-        ret = callback_.write(
-                meta_seq, move(hs), log_seq, move(vec_entries));
+        ret = callback_.write(move(hs), move(vec_entries));
         if (0 != ret) {
-            logdebug("selfid %" PRIu64 " callback_.write meta_seq %"
-                    PRIu64 " hs %p"
-                    " log_seq %" PRIu64 " vec_entries.size %zu ret %d", 
-                    raft_impl_->getSelfId(), meta_seq, hs.get(), 
-                    log_seq, vec_entries.size(), ret);
+            logdebug("selfid %" PRIu64 " callback_.write "
+                    " hs %p vec_entries.size %zu ret %d", 
+                    raft_impl_->getSelfId(), hs.get(), 
+                    vec_entries.size(), ret);
             return raft::ErrorCode::STORAGE_WRITE_ERROR;
         }
     }
 
+    logdebug("selfid %" PRIu64 " msg.type %d hs %p "
+            "vec_entries.size %zu vec_rsp.size %zu", 
+            GetSelfId(), static_cast<int>(msg.type()), hs.get(), 
+            vec_entries.size(), vec_rsp.size());
     // 3.
     assert(0 == ret);
     if (false == vec_rsp.empty()) {
@@ -133,9 +131,12 @@ raft::ErrorCode Raft::Step(const raft::Message& msg)
 std::tuple<raft::ErrorCode, uint64_t>
 Raft::Propose(
         uint64_t prev_index,
-        gsl::array_view<gsl::cstring_view<>> entries)
+        const std::vector<gsl::cstring_view<>>& entries)
 {
-    assert(size_t{0} < entries.length());
+    assert(false == entries.empty());
+    if (MAX_BATCH_SIZE < entries.size()) {
+        return make_tuple(raft::ErrorCode::BIG_BATCH, 0ull);
+    }
 
     // 1. pack msg
     auto prop_msg = buildPropMsg(prev_index, entries);
@@ -200,7 +201,9 @@ Raft::Get(uint64_t index)
 }
 
 std::tuple<raft::ErrorCode, uint64_t>
-Raft::TrySet(uint64_t index, gsl::array_view<gsl::cstring_view<>> entries)
+Raft::TrySet(
+        uint64_t index, 
+        const std::vector<gsl::cstring_view<>>& entries)
 {
     return Propose(index, entries);
 }
@@ -307,6 +310,33 @@ uint64_t Raft::GetTerm()
     lock_guard<mutex> lock(raft_mutex_);
     assert(nullptr != raft_impl_);
     return raft_impl_->getTerm();
+}
+
+bool Raft::IsPending() 
+{
+    uint64_t meta_seq = 0ull;
+    uint64_t log_idx = 0ull;
+    uint64_t log_seq = 0ull;
+    {
+        lock_guard<mutex> lock(raft_mutex_);
+        assert(nullptr != raft_impl_);
+        tie(meta_seq, log_idx, log_seq) = raft_impl_->getStoreSeq();
+    }
+
+    return 0ull != meta_seq || 0ull != log_idx;
+}
+
+void Raft::ReflashTimer(
+        std::chrono::time_point<std::chrono::system_clock> time_now)
+{
+    lock_guard<mutex> lock(raft_mutex_);
+    assert(nullptr != raft_impl_);
+    if (RaftRole::LEADER == raft_impl_->getRole()) {
+        raft_impl_->updateHeartbeatTime(time_now);
+    }
+    else {
+        raft_impl_->updateActiveTime(time_now);
+    }
 }
 
 } // namespace raft;
