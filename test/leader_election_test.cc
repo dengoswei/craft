@@ -24,6 +24,10 @@ CheckLeader(
     uint64_t term = 0ull;
     for (const auto& id_raft : map_raft) {
         const auto& raft = id_raft.second;
+        if (nullptr == raft) {
+            logdebug("MISS raft.id %" PRIu64, id_raft.first);
+            continue;
+        }
         assert(nullptr != raft);
         term = 0ull == term ? raft->getTerm() : term;
         assert(raft->getTerm() == term);
@@ -49,6 +53,10 @@ CheckLeader(
     uint64_t term = 0ull;
     for (const auto& id_raft : map_raft) {
         const auto& raft = id_raft.second;
+        if (nullptr == raft) {
+            logdebug("MISS raft.id %", id_raft.first);
+            continue;
+        }
         assert(nullptr != raft);
         term = 0ull == term ? raft->GetTerm() : term;
         assert(raft->GetTerm() == term);
@@ -124,7 +132,7 @@ TEST(TestRaftLeaderElectionImpl, SimpleElectionSucc)
         
     // 3. become leader & send MsgHeartbeat
     vec_rsp_msg = apply(map_raft, vec_rsp_msg);
-    assert(size_t{2} == vec_rsp_msg.size());
+    assert(size_t{3} == vec_rsp_msg.size());
     assert(RaftRole::LEADER == test_raft->getRole());
     for (auto& rsp_msg : vec_rsp_msg) {
         assert(nullptr != rsp_msg);
@@ -250,6 +258,86 @@ TEST(TestRaftLeaderElectionImpl, EmptyStateRepeatElectionSucc)
     }
 }
 
+TEST(TestRaftLeaderElectionImpl, ElectionWithFailedNode)
+{
+    uint64_t logid = test::LOGID;
+    set<uint64_t> group_ids = test::GROUP_IDS;
+
+    auto map_raft = build_rafts(logid, group_ids, 10, 20);
+    assert(map_raft.size() == group_ids.size());
+    
+    uint64_t failed_id = 1ull;
+    auto failed_raft = move(map_raft[failed_id]);
+    assert(nullptr != failed_raft);
+    assert(nullptr == map_raft[failed_id]);
+
+    // 1. set up timeout
+    uint64_t leader_id = 2ull;
+    for (auto& id_raft : map_raft) {
+        auto& raft = id_raft.second;
+        if (nullptr == raft) {
+            continue;
+        }
+
+        auto tp = chrono::system_clock::now();
+        if (id_raft.first == leader_id) {
+            raft->makeElectionTimeout(tp);
+        }
+        else {
+            raft->updateActiveTime(tp);
+        }
+    }
+
+    // 2. build MsgNull;
+    vector<unique_ptr<Message>> vec_msg;
+    {
+        auto msg_null = buildMsgNull(leader_id, logid, 0ull);
+        vec_msg.emplace_back(move(msg_null));
+    }
+
+    assert(size_t{1} == vec_msg.size());
+    apply_until(map_raft, move(vec_msg));
+    assert(true == vec_msg.empty());
+
+    // 3.
+    for (const auto& id_raft : map_raft) {
+        auto& raft = id_raft.second;
+        if (nullptr == raft) {
+            continue;
+        }
+
+        if (leader_id == id_raft.first) {
+            assert(RaftRole::LEADER == raft->getRole());
+        }
+        else {
+            assert(RaftRole::FOLLOWER == raft->getRole());
+        }
+        assert(1ull == raft->getTerm());
+    }
+
+    // 4. 
+    map_raft[failed_id] = move(failed_raft);
+    assert(nullptr != map_raft[failed_id]);
+    assert(nullptr == failed_raft);
+
+    auto& leader = map_raft[leader_id];
+    assert(nullptr != leader);
+    {
+        auto tp = chrono::system_clock::now();
+        leader->makeHeartbeatTimeout(tp);
+    }
+
+    vec_msg.clear();
+    vec_msg.emplace_back(
+            buildMsgNull(leader_id, logid, leader->getTerm()));
+    assert(size_t{1} == vec_msg.size());
+    apply_until(map_raft, move(vec_msg));
+    assert(true == vec_msg.empty());
+
+    assert(RaftRole::FOLLOWER == map_raft[failed_id]->getRole());
+    assert(leader->getTerm() == map_raft[failed_id]->getTerm());
+}
+
 TEST(TestRaftLeaderElection, SimpleElectionSucc)
 {
     SendHelper sender;
@@ -359,5 +447,74 @@ TEST(TestRaftLeaderElection, EmptyStateRepeatElectionSucc)
         assert(curr_leader_id == peer_id);
         assert(prev_term < curr_term);
     }
+}
+
+TEST(TestRaftLeaderElection, ElectionWithFailedNode)
+{
+    SendHelper sender;
+    uint64_t logid = test::LOGID;
+    set<uint64_t> group_ids = test::GROUP_IDS;
+    map<uint64_t, unique_ptr<StorageHelper>> map_store;
+    map<uint64_t, unique_ptr<Raft>> map_raft;
+
+    tie(map_store, map_raft) = build_rafts(logid, group_ids, sender, 30, 60);
+    assert(map_store.size() == map_raft.size());
+    assert(map_store.size() == group_ids.size());
+
+    uint64_t failed_id = 1ull;
+    auto failed_raft = move(map_raft[failed_id]);
+    assert(nullptr != failed_raft);
+    assert(nullptr == map_raft[failed_id]);
+
+    uint64_t leader_id = 2ull;
+    // 1. timeout
+    for (auto& id_raft : map_raft) {
+        auto& raft = id_raft.second;
+        if (nullptr == raft) {
+            continue;
+        }
+
+        auto tp = chrono::system_clock::now();
+        if (leader_id == raft->GetSelfId()) {
+            auto ret_code = raft->TryToBecomeLeader();
+            assert(ErrorCode::OK == ret_code);
+        }
+        else {
+            raft->ReflashTimer(tp);
+        }
+    }
+
+    sender.apply_until(map_raft);
+    for (const auto& id_raft : map_raft) {
+        const auto& raft = id_raft.second;
+        if (nullptr == raft) {
+            continue;
+        }
+
+        if (leader_id == raft->GetSelfId()) {
+            assert(true == raft->IsLeader());
+        }
+        else {
+            assert(true == raft->IsFollower());
+        }
+    }
+
+    auto& leader = map_raft[leader_id];
+    assert(nullptr != leader);
+    assert(true == leader->IsLeader());
+
+    assert(0ull == failed_raft->GetTerm());
+    map_raft[failed_id] = move(failed_raft);
+    assert(nullptr == failed_raft);
+    assert(nullptr != map_raft[failed_id]);
+
+    leader->MakeTimeoutHeartbeat();
+
+    assert(false == sender.empty());
+    sender.apply_until(map_raft);
+    assert(true == sender.empty());
+
+    assert(true == map_raft[failed_id]->IsFollower());
+    assert(leader->GetTerm() == map_raft[failed_id]->GetTerm());
 }
 

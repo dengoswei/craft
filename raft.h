@@ -32,7 +32,8 @@ class Raft {
 public:
     Raft(uint64_t logid, uint64_t selfid, 
             const std::set<uint64_t>& group_ids, 
-            int election_timeout, 
+            int min_election_timeout, 
+            int max_election_timeout, 
             RaftCallBack callback);
 
     ~Raft();

@@ -14,6 +14,8 @@
 
 namespace raft {
 
+class ReplicateTracker;
+
 enum class RaftRole : uint8_t {
     LEADER = 1, 
     CANDIDATE = 2, 
@@ -36,8 +38,11 @@ private:
         std::function<MessageType(RaftImpl&, const Message&)>;
 
 public:
-    RaftImpl(uint64_t logid, uint64_t selfid, 
-            std::set<uint64_t> group_ids, int election_timeout);
+    RaftImpl(uint64_t logid, 
+            uint64_t selfid, 
+            const std::set<uint64_t>& group_ids, 
+            int min_election_timeout, 
+            int max_election_timeout);
 
     ~RaftImpl();
 
@@ -53,17 +58,18 @@ public:
 
     std::unique_ptr<Message> buildMsgApp(
             uint64_t peer_id, uint64_t next_index, size_t max_batch_size);
-
-    std::vector<std::unique_ptr<Message>> 
-        batchBuildMsgAppUpToDate(size_t max_batch_size);
-
-    std::vector<std::unique_ptr<Message>> 
-        batchBuildMsgApp(size_t max_batch_size);
+//
+//    std::vector<std::unique_ptr<Message>> 
+//        batchBuildMsgAppUpToDate(size_t max_batch_size);
+//
+//    std::vector<std::unique_ptr<Message>> 
+//        batchBuildMsgApp(size_t max_batch_size);
+//
 
     std::unique_ptr<Message> 
         buildMsgHeartbeat(uint64_t peer_id, uint64_t next_index) const;
-
-    std::vector<std::unique_ptr<Message>> batchBuildMsgHeartbeat();
+//
+//    std::vector<std::unique_ptr<Message>> batchBuildMsgHeartbeat();
 
     bool isUpToDate(
             uint64_t peer_log_term, uint64_t peer_max_index);
@@ -91,12 +97,18 @@ public:
     std::vector<std::unique_ptr<raft::Entry>>
         getPendingLogEntries() const;
 
+    bool confirmMajority(
+            uint64_t major_match_index, 
+            const std::map<uint64_t, uint64_t>& match_index) const;
+
     // test helper function
     void makeElectionTimeout(
             std::chrono::time_point<std::chrono::system_clock> tp);
 
     void makeHeartbeatTimeout(
             std::chrono::time_point<std::chrono::system_clock> tp);
+
+    void assertNoPending() const;
 
 public:
 
@@ -173,6 +185,8 @@ public:
     void updateVote(uint64_t peer_id, bool current_rsp);
     bool isMajorVoteYes() const;
 
+    bool isPeerUpToDate(uint64_t peer_commited_index) const;
+
     void updateLeaderCommitedIndex(uint64_t new_commited_index);
     void updateFollowerCommitedIndex(uint64_t leader_commited_index);
     bool isMatch(uint64_t log_index, uint64_t log_term) const;
@@ -183,10 +197,12 @@ public:
             uint64_t peer_id, 
             bool reject, uint64_t reject_hint, uint64_t peer_next_index);
 
-    void becomeFollower();
+    void becomeFollower(uint64_t term);
     void becomeCandidate();
     void becomeLeader();
 
+
+    void resetElectionTimeout();
     bool isHeartbeatTimeout(
             std::chrono::time_point<
                 std::chrono::system_clock> time_now);
@@ -202,6 +218,12 @@ private:
     uint64_t logid_ = 0;
     uint64_t selfid_ = 0;
     std::set<uint64_t> peer_ids_;
+    // FOR: add catch-up node: 
+    // => recv MsgApp but don't count as majority
+    std::set<uint64_t> app_peer_ids_;
+    // FOR: member-ship change
+    std::set<uint64_t> old_peer_ids_;
+    std::set<uint64_t> new_peer_ids_;
 
     uint64_t term_ = 0;
     uint64_t vote_for_ = 0;
@@ -216,6 +238,8 @@ private:
     uint64_t pending_log_idx_ = 0;
     uint64_t pending_log_seq_ = 0;
 
+    RandomTimeout rtimeout_;
+
     std::chrono::milliseconds election_timeout_;
     std::chrono::time_point<std::chrono::system_clock> active_time_;
 
@@ -224,8 +248,7 @@ private:
     std::map<uint64_t, bool> vote_resps_;
 
     // # leader #
-    std::map<uint64_t, uint64_t> next_indexes_;
-    std::map<uint64_t, uint64_t> match_indexes_;
+    std::unique_ptr<ReplicateTracker> replicate_states_;
 
     std::chrono::milliseconds hb_timeout_;
     std::chrono::time_point<std::chrono::system_clock> hb_time_;

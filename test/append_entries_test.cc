@@ -174,20 +174,23 @@ TEST(TestRaftAppendEntriesImpl, SimpleAppendTest)
         assert(nullptr != rsp_msg);
         assert(MessageType::MsgApp == rsp_msg->type());
         assert(raft->getTerm() == rsp_msg->term());
-        assert(0ull == rsp_msg->index());
-        assert(0ull == rsp_msg->log_term());
+        assert(raft->getLastLogIndex() == rsp_msg->index());
+        assert(raft->getTerm() == rsp_msg->log_term());
         assert(1ull == rsp_msg->commit());
         assert(0 == rsp_msg->entries_size());
     }
 
     // 4. followers recv empty MsgApp, update commited_index_
-    //    => & rsp nothing ?
+    //    => & feed back rsp
     vec_msg = apply(map_raft, vec_msg);
     for (const auto& id_raft : map_raft) {
         assert(nullptr != id_raft.second);
         assert(1ull == id_raft.second->getCommitedIndex());
     }
 
+    // 5. leader collect empty rsp, produce nothing
+    assert(size_t{2} == vec_msg.size());
+    vec_msg = apply(map_raft, vec_msg);
     assert(true == vec_msg.empty());
 }
 
@@ -208,6 +211,9 @@ TEST(TestRaftAppendEntriesImpl, RepeatAppendTest)
     const auto fix_term = raft->getTerm();
 
     for (int i = 0; i < 100; ++i) {
+        
+        raft->assertNoPending();
+        logdebug("BEGIN round i %d", i);
         vector<unique_ptr<Message>> vec_msg;
         string value;
         {
@@ -327,6 +333,11 @@ TEST(TestRaftAppendEntries, SimpleAppendTest)
     apply_count = sender.apply(map_raft);
     assert(size_t{2} == apply_count);
 
+    assert(false == sender.empty());
+
+    // 5. leader reply nothing
+    apply_count = sender.apply(map_raft);
+    assert(size_t{2} == apply_count);
     assert(true == sender.empty());
 
     // check

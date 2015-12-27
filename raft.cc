@@ -38,12 +38,14 @@ Raft::Raft(
         uint64_t logid, 
         uint64_t selfid, 
         const std::set<uint64_t>& group_ids, 
-        int election_timeout, 
+        int min_election_timeout, 
+        int max_election_timeout, 
         RaftCallBack callback)
     : logid_(logid)
     , selfid_(selfid)
     , raft_impl_(make_unique<RaftImpl>(
-                logid, selfid, group_ids, election_timeout))
+                logid, selfid, group_ids, 
+                min_election_timeout, max_election_timeout))
     , callback_(callback)
 {
     assert(nullptr != raft_impl_);

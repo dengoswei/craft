@@ -24,10 +24,17 @@ std::vector<std::unique_ptr<raft::Message>>
         assert(nullptr != msg);
         assert(map_raft.end() != map_raft.find(msg->to()));
         auto& raft = map_raft[msg->to()];
+        if (nullptr == raft) {
+            logdebug("DROP msg:type %d from %" PRIu64 " to %" PRIu64, 
+                    static_cast<int>(msg->type()), 
+                    msg->from(), msg->to());
+            continue;
+        }
+
         assert(nullptr != raft);
-        
         MessageType rsp_msg_type = MessageType::MsgNull;
-        TickTime ta("%s msg type %d", __func__, static_cast<int>(msg->type()));
+        TickTime ta("%s msg type %d", __func__, 
+                static_cast<int>(msg->type()));
         {
             TickTime t("step msg type %d entries_size %d",
                     static_cast<int>(msg->type()), 
@@ -43,8 +50,11 @@ std::vector<std::unique_ptr<raft::Message>>
             vec_rsp_msg = raft->produceRsp(*msg, rsp_msg_type);
         }
         for (auto& rsp_msg : vec_rsp_msg) {
+            logdebug("msg.type %d rsp_msg_type %d", 
+                    static_cast<int>(msg->type()), 
+                    static_cast<int>(rsp_msg_type));
             assert(nullptr != rsp_msg);
-            assert(msg->to() == rsp_msg->from());
+            assert(0ull != rsp_msg->to());
             vec_msg.emplace_back(move(rsp_msg));
             assert(nullptr == rsp_msg);
         }
@@ -76,17 +86,14 @@ std::map<uint64_t, std::unique_ptr<raft::RaftImpl>>
     build_rafts(
             uint64_t logid, 
             const std::set<uint64_t>& group_ids, 
-            int min_timeout, int max_timeout)
+            int min_election_timeout, 
+            int max_election_timeout)
 {
-    assert(0 < min_timeout);
-    assert(min_timeout <= max_timeout);
     map<uint64_t, unique_ptr<RaftImpl>> map_raft;
     for (auto id : group_ids) {
-        auto election_timeout = random_int(min_timeout, max_timeout);
-        assert(0 < election_timeout);
-
         auto raft = make_unique<RaftImpl>(
-                logid, id, group_ids, election_timeout);
+                logid, id, group_ids, 
+                min_election_timeout, max_election_timeout);
         assert(nullptr != raft);
         assert(RaftRole::FOLLOWER == raft->getRole());
         assert(map_raft.end() == map_raft.find(id));
@@ -173,12 +180,61 @@ build_raft(
     assert(min_election_timeout <= max_election_timeout);
 
     assert(group_ids.end() != group_ids.find(selfid));
-    auto election_timeout = 
-        random_int(min_election_timeout, max_election_timeout);
-    assert(0 < election_timeout);
-
     return make_unique<Raft>(
-            logid, selfid, group_ids, election_timeout, callback);
+            logid, selfid, group_ids, 
+            min_election_timeout, max_election_timeout, callback);
+}
+
+std::tuple<
+    std::map<uint64_t, std::unique_ptr<StorageHelper>>, 
+    std::map<uint64_t, std::unique_ptr<raft::Raft>>>
+build_rafts(
+        uint64_t logid, 
+        const std::set<uint64_t>& group_ids, 
+        SendHelper& sender, 
+        int min_election_timeout, int max_election_timeout)
+{
+    map<uint64_t, unique_ptr<StorageHelper>> map_store;
+    map<uint64_t, unique_ptr<Raft>> map_raft;
+
+    for (auto id : group_ids) {
+        assert(map_store.end() == map_store.find(id));
+        map_store[id] = make_unique<StorageHelper>();
+        assert(nullptr != map_store[id]);
+
+        StorageHelper* store = map_store[id].get();
+        assert(nullptr != store);
+
+        RaftCallBack callback;
+        callback.read = [=](uint64_t log_index) {
+            assert(nullptr != store);
+            return store->read(log_index);
+        };
+
+        callback.write = [=](
+                unique_ptr<HardState>&& hs, 
+                vector<unique_ptr<Entry>>&& vec_entries) {
+            assert(nullptr != store);
+            return store->write(move(hs), move(vec_entries));
+        };
+
+        callback.send = [&](vector<unique_ptr<Message>>&& vec_msg) {
+            for (auto& msg : vec_msg) {
+                sender.send(move(msg));
+            }
+            return 0;
+        };
+
+        auto raft = build_raft(logid, id, group_ids, 
+                min_election_timeout, max_election_timeout, callback);
+        assert(nullptr != raft);
+        assert(map_raft.end() == map_raft.find(id));
+        map_raft[id] = move(raft);
+    }
+
+    assert(map_raft.size() == map_store.size());
+    assert(map_raft.size() == group_ids.size());
+    return make_tuple(move(map_store), move(map_raft));
 }
 
 void init_leader(
@@ -201,6 +257,9 @@ void init_leader(
             auto ret_code = raft->TryToBecomeLeader();
             assert(raft::ErrorCode::OK == ret_code);
         } 
+        else {
+            raft->ReflashTimer(tp);
+        }
     }
 
     sender.apply_until(map_raft);
@@ -231,39 +290,42 @@ comm_init(
 
     auto logid = LOGID;
     auto group_ids = GROUP_IDS;
-    for (auto id : group_ids) {
-        assert(map_store.end() == map_store.find(id));
-        map_store[id] = make_unique<StorageHelper>();
-        assert(nullptr != map_store[id]);
-
-        StorageHelper* store = map_store[id].get();
-        assert(nullptr != store);
-
-        RaftCallBack callback;
-        callback.read = [=](uint64_t log_index) {
-            assert(nullptr != store);
-            return store->read(log_index);
-        };
-
-        callback.write = [=](
-                unique_ptr<HardState>&& hs, 
-                vector<unique_ptr<Entry>>&& vec_entries) {
-            assert(nullptr != store);
-            return store->write(move(hs), move(vec_entries));
-        };
-
-        callback.send = [&](vector<unique_ptr<Message>>&& vec_msg) {
-            for (auto& msg : vec_msg) {
-                sender.send(move(msg));
-            }
-            return 0;
-        };
-
-        auto raft = build_raft(logid, id, group_ids, 50, 100, callback);
-        assert(nullptr != raft);
-        assert(map_raft.end() == map_raft.find(id));
-        map_raft[id] = move(raft);
-    }
+    tie(map_store, map_raft) = build_rafts(
+            logid, group_ids, sender, min_election_timeout, max_election_timeout);
+//    for (auto id : group_ids) {
+//        assert(map_store.end() == map_store.find(id));
+//        map_store[id] = make_unique<StorageHelper>();
+//        assert(nullptr != map_store[id]);
+//
+//        StorageHelper* store = map_store[id].get();
+//        assert(nullptr != store);
+//
+//        RaftCallBack callback;
+//        callback.read = [=](uint64_t log_index) {
+//            assert(nullptr != store);
+//            return store->read(log_index);
+//        };
+//
+//        callback.write = [=](
+//                unique_ptr<HardState>&& hs, 
+//                vector<unique_ptr<Entry>>&& vec_entries) {
+//            assert(nullptr != store);
+//            return store->write(move(hs), move(vec_entries));
+//        };
+//
+//        callback.send = [&](vector<unique_ptr<Message>>&& vec_msg) {
+//            for (auto& msg : vec_msg) {
+//                sender.send(move(msg));
+//            }
+//            return 0;
+//        };
+//
+//        auto raft = build_raft(logid, id, group_ids, 
+//                min_election_timeout, max_election_timeout, callback);
+//        assert(nullptr != raft);
+//        assert(map_raft.end() == map_raft.find(id));
+//        map_raft[id] = move(raft);
+//    }
 
     assert(map_raft.size() == map_store.size());
     assert(map_raft.size() == GROUP_IDS.size());
@@ -273,6 +335,7 @@ comm_init(
     return make_tuple(logid, move(group_ids), move(map_store), move(map_raft));
 }
 
+StorageHelper::~StorageHelper() = default;
 
 int StorageHelper::write(
         std::unique_ptr<raft::HardState>&& hs)
@@ -347,6 +410,8 @@ std::unique_ptr<raft::Entry> StorageHelper::read(uint64_t log_index)
     return make_unique<Entry>(*entry);
 }
 
+SendHelper::~SendHelper() = default;
+
 void SendHelper::send(std::unique_ptr<raft::Message>&& msg)
 {
     assert(nullptr != msg);
@@ -368,6 +433,12 @@ size_t SendHelper::apply(
         assert(nullptr != msg);
         assert(map_raft.end() != map_raft.find(msg->to()));
         auto& raft = map_raft[msg->to()];
+        if (nullptr == raft) {
+            logdebug("DROP msg:type %d from %" PRIu64 " to %" PRIu64, 
+                    static_cast<int>(msg->type()), 
+                    msg->from(), msg->to());
+            continue;
+        }
         assert(nullptr != raft);
 
         auto ret_code = raft->Step(*msg);

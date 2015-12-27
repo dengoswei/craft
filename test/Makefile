@@ -4,12 +4,12 @@ CXXFLAGS += -g -Wall -Wextra -D TEST_DEBUG
 
 
 
-TESTS = utils_test leader_election_test append_entries_test store_test
+TESTS = utils_test leader_election_test append_entries_test store_test benchmark_test
 
 INCLS += -I../ -I../craftpb 
-INCLS += -I/Users/dengoswei/open-src/github.com/microsoft/GSL/include
-INCLS += -I/Users/dengoswei/project/include
-LINKS += -L/Users/dengoswei/project/lib
+INCLS += -I$(HOME)/open-src/github.com/microsoft/GSL/include
+INCLS += -I$(HOME)/project/include
+LINKS += -L$(HOME)/project/lib
 LINKS += -lpthread -lprotobuf
 
 GTEST_HEADERS = $(GTEST_DIR)/include/gtest/*.h \
@@ -19,7 +19,7 @@ CPPCOMPILE = $(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(INCLS) -c -o $@
 BUILDEXE = $(CXX) $(CPPFLAGS) $(CXXFLAGS) -o $@ $^ $(LINKS)
 
 PROTOS_PATH = ../craftpb
-PROTOC = /Users/dengoswei/project/bin/protoc
+PROTOC = $(HOME)/project/bin/protoc
 GRPC_CPP_PLUGIN = grpc_cpp_plugin
 GRPC_CPP_PLUGIN_PATH ?= `which $(GRPC_CPP_PLUGIN)`
 
@@ -56,17 +56,24 @@ utils_test: utils_test.o
 	$(BUILDEXE)
 
 leader_election_test: leader_election_test.o test_helper.o\
-	../raft.o ../raft_impl.o ../craftpb/raft.pb.o gtest_main.a
-	$(BUILDEXE)
-
-append_entries_test: append_entries_test.o test_helper.o\
-	../raft.o ../raft_impl.o ../craftpb/raft.pb.o gtest_main.a
-	$(BUILDEXE)
-
-store_test: store_test.o test_helper.o ../raft_impl.o \
+	../raft.o ../raft_impl.o ../replicate_tracker.o \
 	../craftpb/raft.pb.o gtest_main.a
 	$(BUILDEXE)
 
+append_entries_test: append_entries_test.o test_helper.o\
+	../raft.o ../raft_impl.o ../replicate_tracker.o \
+	../craftpb/raft.pb.o gtest_main.a
+	$(BUILDEXE)
+
+store_test: store_test.o test_helper.o ../raft_impl.o \
+	../craftpb/raft.pb.o ../replicate_tracker.o gtest_main.a
+	$(BUILDEXE)
+
+benchmark_test: LINKS += -L/usr/local/lib
+benchmark_test: LINKS += -lbenchmark -lcraft
+benchmark_test: INCLS += -I/usr/local/include
+benchmark_test: benchmark_test.o test_helper.o
+	$(BUILDEXE)
 
 %.pb.cc: %.proto
 	$(PROTOC) -I $(PROTOS_PATH) --cpp_out=../craftpb/ $<

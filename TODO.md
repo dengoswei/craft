@@ -8,3 +8,14 @@
 
 4. updateReplicateState => refresh hb timeout ?
 
+
+## Rocksdb + raft
+
+## Membership change
+
+## test with google benchmark
+
+## add random drop message in SendHelper (testing)
+
+## read persistant state to re-build raft
+

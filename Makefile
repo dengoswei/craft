@@ -5,9 +5,9 @@ CXXFLAGS += -g -Wall -Wextra # -D TEST_DEBUG
 TESTS = utils_test
 
 INCLS += -I./craftpb/
-INCLS += -I/Users/dengoswei/open-src/github.com/microsoft/GSL/include
-INCLS += -I/Users/dengoswei/project/include
-LINKS += -L/Users/dengoswei/project/lib
+INCLS += -I$(HOME)/open-src/github.com/microsoft/GSL/include
+INCLS += -I$(HOME)/project/include
+LINKS += -L$(HOME)/project/lib
 LINKS += -lpthread -lprotobuf
 
 AR = ar -rc
@@ -16,7 +16,7 @@ BUILDEXE = $(CXX) $(CPPFLAGS) $(CXXFLAGS) -o $@ $^ $(LINKS)
 ARSTATICLIB = $(AR) $@ $^ $(AR_FLAGS)
 
 PROTOS_PATH = craftpb
-PROTOC = /Users/dengoswei/project/bin/protoc
+PROTOC = $(HOME)/project/bin/protoc
 GRPC_CPP_PLUGIN = grpc_cpp_plugin
 GRPC_CPP_PLUGIN_PATH ?= `which $(GRPC_CPP_PLUGIN)`
 
@@ -25,7 +25,7 @@ all: $(TESTS)
 clean :
 	rm -f $(TESTS) *.o craftpb/*.o craftpb/raft.pb.* test/*.o libcraft.a
 
-libcraft.a: raft.o raft_impl.o craftpb/raft.pb.o 
+libcraft.a: raft.o raft_impl.o replicate_tracker.o craftpb/raft.pb.o 
 	$(ARSTATICLIB)
 
 %.pb.cc: craftpb/%.proto

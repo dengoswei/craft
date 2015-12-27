@@ -73,6 +73,15 @@ build_raft(
         raft::RaftCallBack callback);
 
 std::tuple<
+    std::map<uint64_t, std::unique_ptr<StorageHelper>>, 
+    std::map<uint64_t, std::unique_ptr<raft::Raft>>>
+build_rafts(
+        uint64_t logid, 
+        const std::set<uint64_t>& group_ids, 
+        SendHelper& sender, 
+        int min_election_timeout, int max_election_timeout);
+
+std::tuple<
     uint64_t, 
     std::set<uint64_t>, 
     std::map<uint64_t, std::unique_ptr<StorageHelper>>, 
@@ -88,6 +97,8 @@ comm_init(
 class StorageHelper {
 
 public:
+    ~StorageHelper();
+
     int write(
             std::unique_ptr<raft::HardState>&& hs, 
             std::vector<std::unique_ptr<raft::Entry>>&& vec_entries);
@@ -112,6 +123,7 @@ private:
 class SendHelper {
 
 public:
+    ~SendHelper();
 
     void send(std::unique_ptr<raft::Message>&& msg);
 
