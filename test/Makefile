@@ -56,12 +56,12 @@ utils_test: utils_test.o
 	$(BUILDEXE)
 
 leader_election_test: leader_election_test.o test_helper.o\
-	../raft.o ../raft_impl.o ../replicate_tracker.o \
+	../raft.o ../raft_impl.o ../replicate_tracker.o ../raft_config.o \
 	../craftpb/raft.pb.o gtest_main.a
 	$(BUILDEXE)
 
 append_entries_test: append_entries_test.o test_helper.o\
-	../raft.o ../raft_impl.o ../replicate_tracker.o \
+	../raft.o ../raft_impl.o ../replicate_tracker.o ../raft_config.o \
 	../craftpb/raft.pb.o gtest_main.a
 	$(BUILDEXE)
 

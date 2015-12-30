@@ -176,7 +176,8 @@ public:
                         std::chrono::system_clock::now() - start_);
 
          if (0 < duration.count()) {
-             logdebug("cost time %d = %s", duration.count(), msg_.c_str());
+             logdebug("cost time %d = %s", 
+                     static_cast<int>(duration.count()), msg_.c_str());
          }
          
          has_print_ = true;

@@ -13,6 +13,13 @@
 
 ## Membership change
 
+conf change:
+1. apply conf change in checkAndAppend... 
+   => setting pending conf
+   => ignore conf chang req if any pending conf;
+
+2. clear pending state once conf entry has been commited !
+
 ## test with google benchmark
 
 ## add random drop message in SendHelper (testing)

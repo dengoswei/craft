@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <sstream>
 #include "raft_impl.h"
 #include "replicate_tracker.h"
 
@@ -119,6 +120,8 @@ void appendBroadcastMsg(
         const std::set<uint64_t>& group_ids, 
         const Message& msg_template)
 {
+
+    // TODO
     for (auto peer_id : group_ids) {
         if (msg_template.from() == peer_id) {
             continue;
@@ -129,6 +132,44 @@ void appendBroadcastMsg(
         assert(nullptr != msg);
         msg->set_to(peer_id);
     }
+}
+
+
+inline bool IsAGroupMember(
+        const RaftImpl& raft_impl, uint64_t peer_id, bool check_current)
+{ 
+    if (true == check_current) {
+        return raft_impl.GetCurrentConfig().IsAGroupMember(peer_id);
+    }
+
+    return raft_impl.GetCommitedConfig().IsAGroupMember(peer_id);
+}
+
+inline bool IsAReplicateMember(
+        const RaftImpl& raft_impl, uint64_t peer_id)
+{
+    return raft_impl.GetCurrentConfig().IsAReplicateMember(peer_id);
+}
+
+int ApplyConfChange(
+        const Entry& conf_entry, bool check_pending, 
+        ConfChange& conf_change, RaftConfig& raft_config)
+{
+    if (EntryType::EntryConfChange == conf_entry.type()) {
+        return -1;
+    }
+
+    // 1.
+    {
+        std::stringstream ss;
+        ss.str(conf_entry.data());
+        if (false == conf_change.ParseFromIstream(&ss)) {
+            return -2;
+        }
+    }
+
+    raft_config.ApplyConfChange(conf_change, check_pending);
+    return 0;
 }
 
 } // namespace 
@@ -157,6 +198,13 @@ MessageType onTimeout(
     assert_role(raft_impl, RaftRole::FOLLOWER);
     logdebug("selfid(follower) %" PRIu64 " term %" PRIu64, 
             raft_impl.getSelfId(), raft_impl.getTerm());
+    // only timeout if selfid IsAGroupMember
+    if (false == IsAGroupMember(raft_impl, raft_impl.getSelfId(), true)) {
+        // don't have MsgVote right;
+        raft_impl.updateActiveTime(time_now);
+        return MessageType::MsgNull;
+    }
+
     // raft paper: 
     // Followers 5.2
     // if election timeout elapses without receiving AppendEntries
@@ -176,6 +224,17 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
     switch (msg.type()) {
 
         case MessageType::MsgVote:
+            // valid check
+            // 1. msg.from => is a valid group member in current config;
+            // 2. selfid   => is a valid group member in current config;
+            if (false == IsAGroupMember(raft_impl, msg.from(), true) || 
+                    false == IsAGroupMember(
+                        raft_impl, raft_impl.getSelfId(), true)) {
+                logerr("NotAGroupMember: msg.to %" PRIu64 " msg.from %" PRIu64, 
+                        msg.to(), msg.from());
+                break;
+            }
+
             // candidate requestVote msg
             //
             // raft paper: 5.1 & 5.4
@@ -275,6 +334,11 @@ MessageType onTimeout(
     logdebug("selfid(candidate) %" PRIu64 " term %" PRIu64, 
             raft_impl.getSelfId(), raft_impl.getTerm());
 
+    if (false == IsAGroupMember(raft_impl, raft_impl.getSelfId(), true)) {
+        raft_impl.becomeFollower(raft_impl.getTerm()); // step back as follower;
+        return MessageType::MsgNull;
+    }
+
     // raft paper:
     // Candidates 5.2
     // On conversion to candidate or election timeout elapse, 
@@ -292,6 +356,15 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
     auto rsp_msg_type = MessageType::MsgNull;
     switch (msg.type()) {
         case MessageType::MsgVoteResp:
+            // valid check
+            if (false == IsAGroupMember(raft_impl, msg.from(), true) ||
+                    false == IsAGroupMember(
+                        raft_impl, raft_impl.getSelfId(), true)) {
+                logerr("NotAGroupMember: msg.to %" PRIu64 " msg.from %" PRIu64, 
+                        msg.to(), msg.from());
+                break;
+            }
+
             // collect vote resp
             raft_impl.updateVote(msg.from(), !msg.reject());
             if (raft_impl.isMajorVoteYes()) {
@@ -339,6 +412,8 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
     assert_term(raft_impl, msg.term());
 
     auto rsp_msg_type = MessageType::MsgNull;
+    // check msg.from
+
     switch (msg.type()) {
         case MessageType::MsgProp:
         {
@@ -348,8 +423,12 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
             assert(static_cast<size_t>(
                         msg.entries_size()) == entries.length());
 
-            assert(0 == 
-                    raft_impl.checkAndAppendEntries(msg.index(), entries));
+            auto ret = 
+                raft_impl.checkAndAppendEntries(msg.index(), entries);
+            if (0 != ret) {
+                logerr("checkAndAppendEntries ret %d", ret);
+                break;
+            }
             
             assert(0ull < msg.index() + 1ull);
             auto store_seq = raft_impl.assignStoreSeq(msg.index() + 1ull);
@@ -364,6 +443,15 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
 
         case MessageType::MsgAppResp:
         {
+            if (false == IsAReplicateMember(raft_impl, msg.from())) {
+                // not a replicate member now
+                // => ignore this request
+                logerr("selfid %" PRIu64 
+                        " recv MsgAppResp from NotAReplicateMember %" PRIu64, 
+                        raft_impl.getSelfId(), msg.from());
+                break;
+            }
+
             // collect appendEntry resp
             // TODO: update commited!
             bool update = raft_impl.updateReplicateState(
@@ -384,6 +472,16 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
 
         case MessageType::MsgHeartbeatResp:
         {
+            if (false == IsAReplicateMember(raft_impl, msg.from())) {
+                // not a replicate member now
+                // => ignore this request
+                logerr("selfid %" PRIu64 
+                        " recv MsgHeartbeatResp from NotAReplicateMember %" PRIu64, 
+                        raft_impl.getSelfId(), msg.from());
+                break;
+            }
+
+ 
             // collect heartbeat resp
             bool update = raft_impl.updateReplicateState(
                     msg.from(), msg.reject(), 
@@ -427,8 +525,10 @@ RaftImpl::RaftImpl(
         int max_election_timeout)
     : logid_(logid)
     , selfid_(selfid)
-    , peer_ids_(peer_ids)
-    , app_peer_ids_(peer_ids)
+    , current_config(selfid)
+    , commited_config(selfid)
+//    , peer_ids_(peer_ids)
+//    , app_peer_ids_(peer_ids)
     , rtimeout_(min_election_timeout, max_election_timeout)
     , election_timeout_(rtimeout_())
     , active_time_(chrono::system_clock::now())
@@ -436,17 +536,19 @@ RaftImpl::RaftImpl(
 {
     assert(0 < min_election_timeout);
     assert(min_election_timeout <= max_election_timeout);
-    assert(size_t{3} <= peer_ids.size());
 
-//    for (auto id : peer_ids) {
-//        if (id == selfid_) {
-//            continue;
-//        }
-//
-//        peer_ids_.insert(id);
-//    }
-//
-//    assert(peer_ids_.end() == peer_ids_.find(selfid_));
+    // fake ?
+    for (auto id : peer_ids) {
+        ConfChange conf_change;
+        conf_change.set_type(ConfChangeType::ConfChangeAddNode);
+        conf_change.set_node_id(id);
+
+        current_config.ApplyConfChange(conf_change, false);
+        commited_config.ApplyConfChange(conf_change, false);
+    }
+    assert(false == current_config.IsPending());
+    assert(false == commited_config.IsPending());
+    
     assert(0 < election_timeout_.count());
     assert(0 < hb_timeout_.count());
     setRole(RaftRole::FOLLOWER);
@@ -543,7 +645,7 @@ RaftImpl::produceRsp(
         msg_template.set_index(getLastLogIndex());
         msg_template.set_log_term(getLastLogTerm());
 
-        appendBroadcastMsg(vec_msg, peer_ids_, msg_template);
+        vec_msg = current_config.BuildBroadcastMsg(msg_template);
         logdebug("MsgVote term %" PRIu64 " candidate %" PRIu64 
                 " lastLogIndex %" PRIu64 " lastLogTerm %" PRIu64
                 " vec_msg.size %zu", 
@@ -959,12 +1061,22 @@ int RaftImpl::appendLogs(gsl::array_view<const Entry*> entries)
 
     assert(nullptr != entries[0]);
     uint64_t base_index = entries[0]->index();
-    truncateLogs(logs_, base_index);
+    auto truncate_size = truncateLogs(logs_, base_index);
+    if (size_t{0} < truncate_size) {
+        logerr("INFO selfid %" PRIu64 " truncate_size %zu", 
+                getSelfId(), truncate_size);
+
+        assert(0 == reconstructCurrentConfig()); // reset currentConfig;
+    }
 
     uint64_t last_index = getLastLogIndex();
     assert(last_index + 1 == base_index);
     for (size_t idx = 0; idx < entries.length(); ++idx) {
         assert(nullptr != entries[idx]);
+        if (EntryType::EntryConfChange == entries[idx]->type()) {
+            applyCommitedConfEntry(*entries[idx]);
+        }
+
         logs_.emplace_back(make_unique<Entry>(*entries[idx]));
         assert(nullptr != logs_.back());
     }
@@ -1015,8 +1127,17 @@ int RaftImpl::checkAndAppendEntries(
     // max length control ?
     for (size_t idx = 0; idx < entries.length(); ++idx) {
         assert(nullptr != entries[idx]);
+        // apply conf change before push entries into logs_
         if (EntryType::EntryConfChange == entries[idx]->type()) {
             assert(size_t{1} == entries.length());
+            assert(size_t{0} == idx);
+            // applyConfChange:
+            auto ret = applyUnCommitedConfEntry(*entries[idx]);
+            if (0 != ret) {
+                // drop conf change request
+                logerr("applyConfChange ret %d", ret);
+                return -2;
+            }
         }
 
         logs_.emplace_back(
@@ -1024,10 +1145,6 @@ int RaftImpl::checkAndAppendEntries(
         assert(nullptr != logs_.back());
         logs_.back()->set_term(term_);
         logs_.back()->set_index(last_index + 1ull + idx);
-
-        if (EntryType::EntryConfChange == logs_.back()->type()) {
-            assert(size_t{1} == entries.length());
-        }
     }
 
     replicate_states_->UpdateSelfState(getLastLogIndex());
@@ -1325,8 +1442,9 @@ bool RaftImpl::isMajorVoteYes() const
 {
     assert_role(*this, RaftRole::CANDIDATE);
 
-    return isMajority(true, vote_resps_, 
-            peer_ids_.size(), old_peer_ids_, new_peer_ids_);
+    return current_config.IsMajorVoteYes(vote_resps_);
+//    return isMajority(true, vote_resps_, 
+//            peer_ids_.size(), old_peer_ids_, new_peer_ids_);
 }
 
 bool RaftImpl::isMatch(uint64_t log_index, uint64_t log_term) const
@@ -1518,8 +1636,8 @@ void RaftImpl::becomeLeader()
     assert(selfid_ == leader_id_);
 
     assert(nullptr == replicate_states_);
-    replicate_states_ = make_unique<ReplicateTracker>(
-            selfid_, app_peer_ids_, getLastLogIndex(), MAX_BATCH_SIZE);
+    replicate_states_ = 
+        current_config.CreateReplicateTracker(getLastLogIndex(), MAX_BATCH_SIZE);
     assert(nullptr != replicate_states_);
 
     makeHeartbeatTimeout(chrono::system_clock::now());
@@ -1605,14 +1723,14 @@ void RaftImpl::resetElectionTimeout()
     election_timeout_ = chrono::milliseconds{next_election_timeout};
 }
 
-bool RaftImpl::confirmMajority(
-        uint64_t major_match_index, 
-        const std::map<uint64_t, uint64_t>& match_indexes) const 
-{
-    return isMajority(
-            major_match_index, match_indexes, peer_ids_.size(), 
-            old_peer_ids_, new_peer_ids_);
-}
+//bool RaftImpl::confirmMajority(
+//        uint64_t major_match_index, 
+//        const std::map<uint64_t, uint64_t>& match_indexes) const 
+//{
+//    return isMajority(
+//            major_match_index, match_indexes, peer_ids_.size(), 
+//            old_peer_ids_, new_peer_ids_);
+//}
 
 bool RaftImpl::isPeerUpToDate(uint64_t peer_commited_index) const
 {
@@ -1632,6 +1750,70 @@ void RaftImpl::assertNoPending() const
 
         assert(false == id_pending.second);
     }
+}
+
+int RaftImpl::applyUnCommitedConfEntry(const Entry& conf_entry)
+{
+    ConfChange conf_change;
+    auto ret = ApplyConfChange(conf_entry, true, conf_change, current_config);
+    if (0 != ret) {
+        return ret;
+    }
+
+    // 3.
+    if (nullptr == replicate_states_) {
+        return 0;
+    }
+
+    assert(RaftRole::LEADER == getRole());
+    replicate_states_->ApplyConfChange(conf_change, getLastLogIndex());
+    return 0;
+}
+
+int RaftImpl::applyCommitedConfEntry(const Entry& conf_entry)
+{
+    ConfChange conf_change;
+    return ApplyConfChange(conf_entry, false, conf_change, commited_config);
+}
+
+//bool RaftImpl::isAValidPeer(uint64_t peer_id, MessageType msg_type)
+//{
+//    assert(RaftRole::LEADER == getRole());
+//    switch (msg_type) {
+//        case MessageType::MsgProp:         
+//            return 0ull == peer_id;
+//
+//        case MessageType::MsgAppResp:
+//            return current_config.IsAReplicateMember(peer_id);
+//
+//        case MessageType::MsgHeartbeatResp:
+//            return current_config.IsAReplicateMember(peer_id);
+//    }
+//    // invalid msg type!!!
+//    return true;
+//}
+
+int RaftImpl::reconstructCurrentConfig()
+{
+    assert(RaftRole::FOLLOWER == getRole());
+
+    current_config = commited_config;
+    auto last_index = getLastLogIndex();
+    for (auto index = 
+            getCommitedIndex() + 1ull; index <= last_index; ++index) {
+        auto entry = getLogEntry(index);
+        assert(nullptr != entry);
+
+        ConfChange conf_change;
+        auto ret = ApplyConfChange(
+                *entry, true, conf_change, current_config);
+        if (0 != ret) {
+            return ret;
+        }
+        assert(0 == ret);
+    }
+
+    return 0;
 }
 
 } // namespace raft

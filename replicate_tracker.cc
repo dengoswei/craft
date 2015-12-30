@@ -1,6 +1,8 @@
 #include <algorithm>
 #include "replicate_tracker.h"
 #include "raft_impl.h"
+#include "raft_config.h"
+#include "raft.pb.h"
 #include "utils.h"
 
 using namespace std;
@@ -8,67 +10,69 @@ using namespace std;
 namespace raft {
 
 ReplicateTracker::ReplicateTracker(
-        uint64_t selfid, 
-        const std::set<uint64_t>& peer_ids, 
+        const RaftConfig& current_config, 
+//        uint64_t selfid, 
+//        const std::set<uint64_t>& peer_ids, 
         uint64_t last_log_index, 
         size_t max_batch_size)
-    : selfid_(selfid)
+    : current_config_(current_config)
     , max_batch_size_(max_batch_size)
 {
-    assert(0ull < selfid);
     assert(0 < max_batch_size);
 
-    for (auto id : peer_ids) {
+    for (auto id : current_config_.GetReplicateGroup()) {
         AddNode(id, last_log_index);
     }
 
     UpdateSelfState(last_log_index);
-    assert(peer_ids_.end() != peer_ids_.find(selfid_));
 }
 
 void ReplicateTracker::AddNode(
         uint64_t peer_id, uint64_t last_log_index)
 {
-    if (peer_ids_.end() == peer_ids_.find(peer_id)) {
+    if (next_indexes_.end() == next_indexes_.find(peer_id)) {
         logdebug("selfid %" PRIu64 " peer_id %" PRIu64 
                 " last_log_index %" PRIu64 " peer_ids_.size %zu", 
-                selfid_, peer_id, last_log_index, peer_ids_.size());
-        peer_ids_.insert(peer_id);
-        assert(next_indexes_.end() == next_indexes_.find(peer_id));
+                current_config_.GetSelfId(), 
+                peer_id, last_log_index, 
+                current_config_.GetReplicateGroup().size());
+
         next_indexes_[peer_id] = last_log_index + 1ull;
         match_indexes_[peer_id] = 0ull;
         next_batch_sizes_[peer_id] = size_t{0};
         pending_[peer_id] = false;
     }
-    assert(peer_ids_.end() != peer_ids_.find(peer_id));
+    assert(next_indexes_.end() != next_indexes_.find(peer_id));
 }
 
 void ReplicateTracker::RemoveNode(uint64_t peer_id)
 {
-    if (peer_ids_.end() != peer_ids_.find(peer_id)) {
+    if (next_indexes_.end() != next_indexes_.find(peer_id)) {
         logdebugPeerState(peer_id);
             
-        peer_ids_.erase(peer_id);
-        assert(next_indexes_.end() != next_indexes_.find(peer_id));
         next_indexes_.erase(peer_id);
         match_indexes_.erase(peer_id);
         next_batch_sizes_.erase(peer_id);
         pending_.erase(peer_id);
     }
+
+    assert(next_indexes_.end() == next_indexes_.find(peer_id));
 }
 
 void ReplicateTracker::UpdateSelfState(uint64_t last_log_index)
 {
-    next_indexes_[selfid_] = last_log_index + 1ull;
-    match_indexes_[selfid_] = last_log_index;
-    pending_[selfid_] = true; // always pending for selfid
+    auto selfid = current_config_.GetSelfId();
+    next_indexes_[selfid] = last_log_index + 1ull;
+    match_indexes_[selfid] = last_log_index;
+    pending_[selfid] = true; // always pending for selfid
 }
 
 std::vector<std::unique_ptr<Message>>
 ReplicateTracker::BatchBuildMsgApp(RaftImpl& raft_impl)
 {
     vector<unique_ptr<Message>> vec_msg;
-    for (auto peer_id : peer_ids_) {
+    const auto& peer_ids = current_config_.GetReplicateGroup();
+    for (auto peer_id : peer_ids) {
         auto msg_app = BuildMsgApp(raft_impl, peer_id);
         if (nullptr != msg_app) {
             vec_msg.emplace_back(move(msg_app));
@@ -81,12 +85,13 @@ ReplicateTracker::BatchBuildMsgApp(RaftImpl& raft_impl)
 std::unique_ptr<Message>
 ReplicateTracker::BuildMsgApp(RaftImpl& raft_impl, uint64_t peer_id)
 {
-    if (peer_ids_.end() == peer_ids_.find(peer_id)) {
+    const auto& peer_ids = current_config_.GetReplicateGroup();
+    if (peer_ids.end() == peer_ids.find(peer_id)) {
         logdebug("leader: missing peer_id %" PRIu64, peer_id);
         return nullptr;
     }
 
-    assert(peer_ids_.end() != peer_ids_.find(peer_id));
+    assert(peer_ids.end() != peer_ids.find(peer_id));
     logdebugPeerState(peer_id);
     if (true == pending_[peer_id]) {
         return nullptr;
@@ -107,8 +112,9 @@ ReplicateTracker::BuildMsgApp(RaftImpl& raft_impl, uint64_t peer_id)
 std::vector<std::unique_ptr<Message>>
 ReplicateTracker::BatchBuildMsgHeartbeat(RaftImpl& raft_impl)
 {
+    const auto& peer_ids = current_config_.GetReplicateGroup();
     vector<unique_ptr<Message>> vec_msg;
-    for (auto peer_id : peer_ids_) {
+    for (auto peer_id : peer_ids) {
         auto msg_hb = BuildMsgHeartbeat(raft_impl, peer_id);
         assert(nullptr != msg_hb);
         vec_msg.emplace_back(move(msg_hb));
@@ -121,12 +127,13 @@ std::unique_ptr<Message>
 ReplicateTracker::BuildMsgHeartbeat(
         RaftImpl& raft_impl, uint64_t peer_id)
 {
-    if (peer_ids_.end() == peer_ids_.find(peer_id)) {
+    const auto& peer_ids = current_config_.GetReplicateGroup();
+    if (peer_ids.end() == peer_ids.find(peer_id)) {
         logdebug("leader: missing peer_id %" PRIu64, peer_id);
         return nullptr;
     }
 
-    assert(peer_ids_.end() != peer_ids_.find(peer_id));
+    assert(peer_ids.end() != peer_ids.find(peer_id));
     logdebugPeerState(peer_id);
 
     // reset peer_id for every period of msg heart-beat
@@ -143,16 +150,17 @@ bool ReplicateTracker::UpdateReplicateState(
         bool reject, uint64_t /* reject_hint */, 
         uint64_t peer_next_index)
 {
+    const auto& peer_ids = current_config_.GetReplicateGroup();
     logdebug("peer_id %" PRIu64 " reject %d peer_next_index %" PRIu64 
             " next_indexes_ %" PRIu64, 
             peer_id, int{reject}, peer_next_index, 
             next_indexes_[peer_id]);
-    if (peer_ids_.end() == peer_ids_.find(peer_id)) {
+    if (peer_ids.end() == peer_ids.find(peer_id)) {
         logdebug("leader: missing peer_id %" PRIu64, peer_id);
         return false;
     }
 
-    assert(peer_ids_.end() != peer_ids_.find(peer_id));
+    assert(peer_ids.end() != peer_ids.find(peer_id));
     if (peer_next_index < next_indexes_[peer_id]) {
         // out-date msg
         return false;
@@ -203,7 +211,7 @@ bool ReplicateTracker::UpdateReplicateState(
         // Agreement(for elections and entry commitment) requires
         // seperate majorities from both the old and new configrations.
         // TODO
-        if (raft_impl.confirmMajority(
+        if (current_config_.IsMajorCommited(
                     new_match_index, match_indexes_)) {
             raft_impl.updateLeaderCommitedIndex(new_match_index);
         }
@@ -225,11 +233,31 @@ void ReplicateTracker::logdebugPeerState(uint64_t peer_id)
     logdebug("selfid %" PRIu64 " peer_id %" PRIu64 
             " next_indexes_ %" PRIu64 " match_indexes_ %" PRIu64
             " next_batch_sizes_ %zu pending_ %d peer_ids_.size %zu", 
-            selfid_, peer_id, next_indexes_[peer_id], 
+            current_config_.GetSelfId(), 
+            peer_id, next_indexes_[peer_id], 
             match_indexes_[peer_id], next_batch_sizes_[peer_id], 
-            int{pending_[peer_id]}, peer_ids_.size());
+            int{pending_[peer_id]}, 
+            current_config_.GetReplicateGroup().size());
 }
 
+int ReplicateTracker::ApplyConfChange(
+        const ConfChange& conf_change, uint64_t last_log_index)
+{
+    auto node_id = conf_change.node_id();
+    switch (conf_change.type()) 
+    {
+        case ConfChangeType::ConfChangeAddNode:
+        case ConfChangeType::ConfChangeAddCatchUpNode:
+            AddNode(node_id, last_log_index);
+            break;
+        case ConfChangeType::ConfChangeRemoveNode:
+        case ConfChangeType::ConfChangeRemoveCatchUpNode:
+            RemoveNode(node_id);
+            break;
+    }
+
+    return 0;
+}
 
 } // namespace raft;
 

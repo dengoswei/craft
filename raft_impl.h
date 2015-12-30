@@ -10,6 +10,7 @@
 #include "utils.h"
 #include "raft.pb.h"
 #include "gsl.h"
+#include "raft_config.h"
 
 
 namespace raft {
@@ -97,9 +98,9 @@ public:
     std::vector<std::unique_ptr<raft::Entry>>
         getPendingLogEntries() const;
 
-    bool confirmMajority(
-            uint64_t major_match_index, 
-            const std::map<uint64_t, uint64_t>& match_index) const;
+//    bool confirmMajority(
+//            uint64_t major_match_index, 
+//            const std::map<uint64_t, uint64_t>& match_index) const;
 
     // test helper function
     void makeElectionTimeout(
@@ -110,7 +111,22 @@ public:
 
     void assertNoPending() const;
 
+    int applyUnCommitedConfEntry(const Entry& conf_entry);
+
+    int applyCommitedConfEntry(const Entry& conf_entry);
+
+    int reconstructCurrentConfig();
+
+    const RaftConfig& GetCurrentConfig() const {
+        return current_config;
+    }
+
+    const RaftConfig& GetCommitedConfig() const {
+        return commited_config;
+    }
+
 public:
+
 
     uint64_t getLogId() const {
         return logid_;
@@ -217,13 +233,17 @@ private:
 
     uint64_t logid_ = 0;
     uint64_t selfid_ = 0;
-    std::set<uint64_t> peer_ids_;
-    // FOR: add catch-up node: 
-    // => recv MsgApp but don't count as majority
-    std::set<uint64_t> app_peer_ids_;
-    // FOR: member-ship change
-    std::set<uint64_t> old_peer_ids_;
-    std::set<uint64_t> new_peer_ids_;
+
+    RaftConfig current_config;
+    RaftConfig commited_config;
+
+//    std::set<uint64_t> peer_ids_;
+//    // FOR: add catch-up node: 
+//    // => recv MsgApp but don't count as majority
+//    std::set<uint64_t> app_peer_ids_;
+//    // FOR: member-ship change
+//    std::set<uint64_t> old_peer_ids_;
+//    std::set<uint64_t> new_peer_ids_;
 
     uint64_t term_ = 0;
     uint64_t vote_for_ = 0;

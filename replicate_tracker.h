@@ -11,15 +11,16 @@
 namespace raft {
 
 class Message;
+class ConfChange;
 class RaftImpl;
+class RaftConfig;
 
 
 class ReplicateTracker {
 
 public:
     ReplicateTracker(
-            uint64_t selfid, 
-            const std::set<uint64_t>& peer_ids, 
+            const RaftConfig& current_config, 
             uint64_t last_log_index, 
             size_t max_batch_size);
 
@@ -48,8 +49,11 @@ public:
             uint64_t /* reject_hint */, 
             uint64_t peer_next_index);
 
+    int ApplyConfChange(
+            const ConfChange& conf_change, uint64_t last_log_index);
+
     // add for test
-    const std::map<uint64_t, bool> peekPendingState() const {
+    const std::map<uint64_t, bool>& peekPendingState() const {
         return pending_;
     }
 
@@ -61,10 +65,11 @@ private:
     void logdebugPeerState(uint64_t peer_id);
 
 private:
-    uint64_t selfid_;
+    const RaftConfig& current_config_;
+//    uint64_t selfid_;
     const size_t max_batch_size_;
     // including selfid
-    std::set<uint64_t> peer_ids_;
+//    std::set<uint64_t> peer_ids_;
 
     std::map<uint64_t, uint64_t> next_indexes_;
     std::map<uint64_t, uint64_t> match_indexes_;
