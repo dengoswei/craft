@@ -6,6 +6,32 @@
 
 using namespace std;
 
+namespace {
+
+using namespace raft;
+
+std::vector<std::unique_ptr<Message>>
+    buildBroadcastMsg(
+            uint64_t selfid, 
+            const std::set<uint64_t>& group, const Message& msg_template)
+{
+    vector<unique_ptr<Message>> vec_msg;
+    for (auto peer_id : group) {
+        if (selfid == peer_id) {
+            continue;
+        }
+
+        vec_msg.emplace_back(
+                make_unique<Message>(msg_template));
+        auto& msg = vec_msg.back();
+        assert(nullptr != msg);
+        msg->set_to(peer_id);
+    }
+    
+    return vec_msg;
+}
+
+} // namespace
 
 namespace raft {
 
@@ -18,6 +44,10 @@ RaftConfig::RaftConfig(uint64_t selfid)
 int RaftConfig::ApplyConfChange(
         const ConfChange& conf_change, bool check_pending)
 {
+    if (0ull == conf_change.node_id()) {
+        return -1;
+    }
+
     auto ret = 0;
     switch (conf_change.type()) 
     {
@@ -48,9 +78,8 @@ int RaftConfig::ApplyConfChange(
 void RaftConfig::CommitConfChange(const ConfChange& conf_change)
 {
     auto conf_type = conf_change.type();
-    if (ConfChangeType::ConfChangeAddNode != conf_type || 
-            ConfChangeType::ConfChangeRemoveNode != conf_type || 
-            ConfChangeType::ConfChangeUpdateNode != conf_type) {
+    if (ConfChangeType::ConfChangeAddCatchUpNode == conf_type || 
+            ConfChangeType::ConfChangeRemoveCatchUpNode == conf_type) {
         return ;
     }
 
@@ -95,7 +124,7 @@ int RaftConfig::removeNode(
     assert(false == pending_);
     auto node_id = conf_change.node_id();
     group_ids_.erase(node_id);
-    replicate_group_ids_.insert(node_id);
+    replicate_group_ids_.erase(node_id);
     if (true == check_pending) {
         pending_ = true;
     }
@@ -153,6 +182,11 @@ int RaftConfig::removeCatchUpNode(const ConfChange& conf_change)
             conf_change.type());
     
     auto node_id = conf_change.node_id();
+    if (IsAGroupMember(node_id)) {
+        // can't remove a replicate node if still in group_ids_
+        return -10;
+    }
+
     replicate_group_ids_.erase(node_id);
     logdebug("selfid %" PRIu64 " conf change id %" PRIu64 
             " node_id %" PRIu64 " context.size %zu", 
@@ -162,23 +196,17 @@ int RaftConfig::removeCatchUpNode(const ConfChange& conf_change)
 }
 
 std::vector<std::unique_ptr<Message>>
-RaftConfig::BuildBroadcastMsg(const Message& msg_template)
+RaftConfig::BroadcastGroupMsg(const Message& msg_template)
 {
-    vector<unique_ptr<Message>> vec_msg;
-    for (auto peer_id : group_ids_) {
-        if (selfid_ == peer_id) {
-            continue;
-        }
-
-        vec_msg.emplace_back(
-                make_unique<Message>(msg_template));
-        auto& msg = vec_msg.back();
-        assert(nullptr != msg);
-        msg->set_to(peer_id);
-    }
-    
-    return vec_msg;
+    return buildBroadcastMsg(selfid_, group_ids_, msg_template);
 }
+
+std::vector<std::unique_ptr<Message>>
+RaftConfig::BroadcastReplicateGroupMsg(const Message& msg_template)
+{
+    return buildBroadcastMsg(selfid_, replicate_group_ids_, msg_template);
+}
+
 
 bool 
 RaftConfig::IsMajorVoteYes(const std::map<uint64_t, bool>& votes) const
@@ -199,7 +227,7 @@ RaftConfig::CreateReplicateTracker(
         uint64_t last_log_index, size_t max_batch_size) const
 {
     return make_unique<ReplicateTracker>(
-            *this, last_log_index, max_batch_size);
+            selfid_, replicate_group_ids_, last_log_index, max_batch_size);
 }
 
 } // namespace raft;

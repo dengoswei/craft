@@ -172,6 +172,52 @@ int ApplyConfChange(
     return 0;
 }
 
+std::vector<std::unique_ptr<raft::Message>>
+batchBuildMsgApp(raft::RaftImpl& raft_impl)
+{
+    vector<unique_ptr<Message>> vec_msg;   
+    const auto& replicate_group = 
+        raft_impl.GetCurrentConfig().GetReplicateGroup();
+    uint64_t last_log_index = raft_impl.getLastLogIndex();
+    for (auto peer_id : replicate_group) {
+        auto msg = 
+            raft_impl.GetReplicateTracker().BuildMsgApp(
+                last_log_index, peer_id, 
+                [&](uint64_t to, uint64_t next_index, size_t batch_size) {
+                    return raft_impl.buildMsgApp(
+                            to, next_index, batch_size);
+                });
+        if (nullptr != msg) {
+            vec_msg.emplace_back(move(msg));
+        }
+        assert(nullptr == msg);
+    }
+
+    return vec_msg;
+}
+
+std::vector<std::unique_ptr<raft::Message>>
+batchBuildMsgHeartbeat(raft::RaftImpl& raft_impl)
+{
+    vector<unique_ptr<Message>> vec_msg;
+    const auto& replicate_group = 
+        raft_impl.GetCurrentConfig().GetReplicateGroup();
+    for (auto peer_id : replicate_group) {
+        auto msg = 
+            raft_impl.GetReplicateTracker().BuildMsgHeartbeat(
+                    peer_id, 
+                    [&](uint64_t to, uint64_t next_index, size_t /*  */) {
+                        return raft_impl.buildMsgHeartbeat(to, next_index);
+                    });
+        if (nullptr != msg) {
+            vec_msg.emplace_back(move(msg));
+        }
+        assert(nullptr == msg);
+    }
+
+    return vec_msg;
+}
+
 } // namespace 
 
 
@@ -525,8 +571,8 @@ RaftImpl::RaftImpl(
         int max_election_timeout)
     : logid_(logid)
     , selfid_(selfid)
-    , current_config(selfid)
-    , commited_config(selfid)
+    , current_config_(selfid)
+    , commited_config_(selfid)
 //    , peer_ids_(peer_ids)
 //    , app_peer_ids_(peer_ids)
     , rtimeout_(min_election_timeout, max_election_timeout)
@@ -543,11 +589,11 @@ RaftImpl::RaftImpl(
         conf_change.set_type(ConfChangeType::ConfChangeAddNode);
         conf_change.set_node_id(id);
 
-        current_config.ApplyConfChange(conf_change, false);
-        commited_config.ApplyConfChange(conf_change, false);
+        current_config_.ApplyConfChange(conf_change, false);
+        commited_config_.ApplyConfChange(conf_change, false);
     }
-    assert(false == current_config.IsPending());
-    assert(false == commited_config.IsPending());
+    assert(false == current_config_.IsPending());
+    assert(false == commited_config_.IsPending());
     
     assert(0 < election_timeout_.count());
     assert(0 < hb_timeout_.count());
@@ -645,7 +691,7 @@ RaftImpl::produceRsp(
         msg_template.set_index(getLastLogIndex());
         msg_template.set_log_term(getLastLogTerm());
 
-        vec_msg = current_config.BuildBroadcastMsg(msg_template);
+        vec_msg = current_config_.BroadcastGroupMsg(msg_template);
         logdebug("MsgVote term %" PRIu64 " candidate %" PRIu64 
                 " lastLogIndex %" PRIu64 " lastLogTerm %" PRIu64
                 " vec_msg.size %zu", 
@@ -677,7 +723,7 @@ RaftImpl::produceRsp(
         assert(nullptr != replicate_states_);
         // req_msg.type() == MessageType::MsgProp
         if (0ull == req_msg.from()) {
-            vec_msg = replicate_states_->BatchBuildMsgApp(*this);
+            vec_msg = batchBuildMsgApp(*this);
             logdebug("MsgApp BatchBuildMsgAppUpToDate "
                     "vec_msg.size %zu", vec_msg.size());
         }
@@ -686,7 +732,12 @@ RaftImpl::produceRsp(
             // catch-up mode maybe
             assert(MessageType::MsgAppResp == req_msg.type());
             auto rsp_msg = 
-                replicate_states_->BuildMsgApp(*this, req_msg.from());
+                replicate_states_->BuildMsgApp(
+                        getLastLogIndex(), req_msg.from(), 
+                        [&](uint64_t to, 
+                            uint64_t next_index, size_t batch_size) {
+                            return buildMsgApp(to, next_index, batch_size);
+                        });
             if (nullptr != rsp_msg) {
                 logdebug("MsgApp from %" PRIu64 " to %" PRIu64 
                         " index %" PRIu64 " log_term %" PRIu64, 
@@ -768,8 +819,13 @@ RaftImpl::produceRsp(
             assert(MessageType::MsgHeartbeatResp == req_msg.type());
             assert(true == req_msg.reject());
 
-            auto hb_msg = replicate_states_->BuildMsgHeartbeat(
-                    *this, req_msg.from());
+            auto hb_msg = 
+                replicate_states_->BuildMsgHeartbeat(
+                        req_msg.from(), 
+                        [&](uint64_t to, 
+                            uint64_t next_index, size_t /* */) {
+                            return buildMsgHeartbeat(to, next_index);
+                        });
             if (nullptr != hb_msg) {
                 vec_msg.emplace_back(move(hb_msg));
             }
@@ -777,7 +833,7 @@ RaftImpl::produceRsp(
         }
         else {
             // broad cast
-            vec_msg = replicate_states_->BatchBuildMsgHeartbeat(*this);
+            vec_msg = batchBuildMsgHeartbeat(*this);
         }
     }
         break;
@@ -1442,7 +1498,7 @@ bool RaftImpl::isMajorVoteYes() const
 {
     assert_role(*this, RaftRole::CANDIDATE);
 
-    return current_config.IsMajorVoteYes(vote_resps_);
+    return current_config_.IsMajorVoteYes(vote_resps_);
 //    return isMajority(true, vote_resps_, 
 //            peer_ids_.size(), old_peer_ids_, new_peer_ids_);
 }
@@ -1523,9 +1579,26 @@ bool RaftImpl::updateReplicateState(
 {
     assert_role(*this, RaftRole::LEADER);
     assert(nullptr != replicate_states_);
-    return replicate_states_->UpdateReplicateState(
-            *this, 
+    bool update = replicate_states_->UpdateReplicateState(
             peer_id, reject, reject_hint, peer_next_index);
+    if (true == update) {
+        assert(0ull < peer_next_index);
+        auto new_commited_index = peer_next_index - 1ull;
+        if (getTerm() == getLogTerm(new_commited_index) && 
+                new_commited_index > getCommitedIndex()) {
+
+            if (current_config_.IsMajorCommited(
+                        new_commited_index, 
+                        replicate_states_->peekMatchIndexes())) {
+                updateLeaderCommitedIndex(new_commited_index);
+            }
+        }
+    }
+
+    return update;
+//    return replicate_states_->UpdateReplicateState(
+//            *this, 
+//            peer_id, reject, reject_hint, peer_next_index);
 }
 // OLD updateReplicateState impl
 //    assert(peer_ids_.end() != peer_ids_.find(peer_id));
@@ -1637,7 +1710,7 @@ void RaftImpl::becomeLeader()
 
     assert(nullptr == replicate_states_);
     replicate_states_ = 
-        current_config.CreateReplicateTracker(getLastLogIndex(), MAX_BATCH_SIZE);
+        current_config_.CreateReplicateTracker(getLastLogIndex(), MAX_BATCH_SIZE);
     assert(nullptr != replicate_states_);
 
     makeHeartbeatTimeout(chrono::system_clock::now());
@@ -1755,7 +1828,7 @@ void RaftImpl::assertNoPending() const
 int RaftImpl::applyUnCommitedConfEntry(const Entry& conf_entry)
 {
     ConfChange conf_change;
-    auto ret = ApplyConfChange(conf_entry, true, conf_change, current_config);
+    auto ret = ApplyConfChange(conf_entry, true, conf_change, current_config_);
     if (0 != ret) {
         return ret;
     }
@@ -1773,7 +1846,7 @@ int RaftImpl::applyUnCommitedConfEntry(const Entry& conf_entry)
 int RaftImpl::applyCommitedConfEntry(const Entry& conf_entry)
 {
     ConfChange conf_change;
-    return ApplyConfChange(conf_entry, false, conf_change, commited_config);
+    return ApplyConfChange(conf_entry, false, conf_change, commited_config_);
 }
 
 //bool RaftImpl::isAValidPeer(uint64_t peer_id, MessageType msg_type)
@@ -1784,10 +1857,10 @@ int RaftImpl::applyCommitedConfEntry(const Entry& conf_entry)
 //            return 0ull == peer_id;
 //
 //        case MessageType::MsgAppResp:
-//            return current_config.IsAReplicateMember(peer_id);
+//            return current_config_.IsAReplicateMember(peer_id);
 //
 //        case MessageType::MsgHeartbeatResp:
-//            return current_config.IsAReplicateMember(peer_id);
+//            return current_config_.IsAReplicateMember(peer_id);
 //    }
 //    // invalid msg type!!!
 //    return true;
@@ -1797,7 +1870,7 @@ int RaftImpl::reconstructCurrentConfig()
 {
     assert(RaftRole::FOLLOWER == getRole());
 
-    current_config = commited_config;
+    current_config_ = commited_config_;
     auto last_index = getLastLogIndex();
     for (auto index = 
             getCommitedIndex() + 1ull; index <= last_index; ++index) {
@@ -1806,7 +1879,7 @@ int RaftImpl::reconstructCurrentConfig()
 
         ConfChange conf_change;
         auto ret = ApplyConfChange(
-                *entry, true, conf_change, current_config);
+                *entry, true, conf_change, current_config_);
         if (0 != ret) {
             return ret;
         }

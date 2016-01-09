@@ -26,3 +26,5 @@ conf change:
 
 ## read persistant state to re-build raft
 
+### TODAY
+## decouple replicate_tracker & raft_impl

@@ -4,7 +4,9 @@ CXXFLAGS += -g -Wall -Wextra -D TEST_DEBUG
 
 
 
-TESTS = utils_test leader_election_test append_entries_test store_test benchmark_test
+TESTS = utils_test leader_election_test \
+		append_entries_test store_test benchmark_test \
+		config_test replicate_test
 
 INCLS += -I../ -I../craftpb 
 INCLS += -I$(HOME)/open-src/github.com/microsoft/GSL/include
@@ -64,6 +66,17 @@ append_entries_test: append_entries_test.o test_helper.o\
 	../raft.o ../raft_impl.o ../replicate_tracker.o ../raft_config.o \
 	../craftpb/raft.pb.o gtest_main.a
 	$(BUILDEXE)
+
+config_test: config_test.o ../raft_impl.o ../replicate_tracker.o \
+	test_helper.o ../raft.o ../replicate_tracker.o \
+	../raft_config.o ../craftpb/raft.pb.o gtest_main.a
+	$(BUILDEXE)
+
+replicate_test: replicate_test.o ../raft_impl.o ../replicate_tracker.o \
+	test_helper.o ../raft.o ../replicate_tracker.o \
+	../raft_config.o ../craftpb/raft.pb.o gtest_main.a
+	$(BUILDEXE)
+
 
 store_test: store_test.o test_helper.o ../raft_impl.o \
 	../craftpb/raft.pb.o ../replicate_tracker.o gtest_main.a

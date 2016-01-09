@@ -1,5 +1,6 @@
 #include "test_helper.h"
 #include "raft_impl.h"
+#include "raft_config.h"
 #include "raft.h"
 #include "raft.pb.h"
 #include "utils.h"
@@ -537,6 +538,60 @@ buildMsgNull(uint64_t to_id, uint64_t logid, uint64_t term)
     return msg_null;
 }
 
+
+int applyConfChange(
+        raft::RaftConfig& config, 
+        raft::ConfChangeType change_type, 
+        uint64_t node_id, bool check_pending)
+{
+    ConfChange conf_change;
+    conf_change.set_type(change_type);
+    conf_change.set_node_id(node_id);
+    return config.ApplyConfChange(conf_change, check_pending);
+}
+
+int addNode(
+        raft::RaftConfig& config, uint64_t node_id, bool check_pending)
+{
+    return applyConfChange(
+            config, ConfChangeType::ConfChangeAddNode, 
+            node_id, check_pending);
+}
+
+int addCatchUpNode(
+        raft::RaftConfig& config, uint64_t node_id)
+{
+    return applyConfChange(
+            config, ConfChangeType::ConfChangeAddCatchUpNode, 
+            node_id, true);
+}
+
+int removeNode(
+        raft::RaftConfig& config, uint64_t node_id, bool check_pending)
+{
+    return applyConfChange(
+            config, ConfChangeType::ConfChangeRemoveNode, 
+            node_id, check_pending);
+}
+
+int removeCatchUpNode(
+        raft::RaftConfig& config, uint64_t node_id)
+{
+    return applyConfChange(
+            config, ConfChangeType::ConfChangeRemoveCatchUpNode, 
+            node_id, true);
+}
+
+raft::RaftConfig buildTestConfig()
+{
+    RaftConfig config(1ull);
+    
+    for (auto id : {1ull, 2ull, 3ull}) {
+        addNode(config, id, false);
+    }
+
+    return config;
+}
 
 
 } // namespace test

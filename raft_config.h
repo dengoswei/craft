@@ -17,7 +17,8 @@ class RaftConfig {
 public:
     RaftConfig(uint64_t selfid);
 
-    int ApplyConfChange(const ConfChange& conf_change, bool check_pending);
+    int ApplyConfChange(
+            const ConfChange& conf_change, bool check_pending);
 
     void CommitConfChange(const ConfChange& conf_change);
 
@@ -31,7 +32,10 @@ public:
     }
 
     std::vector<std::unique_ptr<Message>>
-        BuildBroadcastMsg(const Message& msg_template);
+        BroadcastGroupMsg(const Message& msg_template);
+
+    std::vector<std::unique_ptr<Message>>
+        BroadcastReplicateGroupMsg(const Message& msg_template);
 
     bool IsMajorVoteYes(const std::map<uint64_t, bool>& votes) const;
 
@@ -53,6 +57,10 @@ public:
 
     const std::set<uint64_t>& GetReplicateGroup() const {
         return replicate_group_ids_;
+    }
+
+    const std::set<uint64_t>& GetGroup() const {
+        return group_ids_;
     }
 
 private:

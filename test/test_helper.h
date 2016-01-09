@@ -8,15 +8,14 @@
 #include <mutex>
 #include <string>
 #include <stdint.h>
+#include "raft.pb.h"
 
 
 namespace raft {
 
-class Message;
-class HardState;
-class Entry;
 class RaftImpl;
 class Raft;
+class RaftConfig;
 
 struct RaftCallBack;
 
@@ -154,6 +153,25 @@ batchBuildMsgProp(
         
 std::unique_ptr<raft::Message>
     buildMsgNull(uint64_t to_id, uint64_t logid, uint64_t term);
+
+int applyConfChange(
+        raft::RaftConfig& config, 
+        raft::ConfChangeType change_type, 
+        uint64_t node_id, bool check_pending);
+
+int addNode(raft::RaftConfig& config, 
+        uint64_t node_id, bool check_pending);
+
+int addCatchUpNode(
+        raft::RaftConfig& config, uint64_t node_id);
+
+int removeNode(
+        raft::RaftConfig& config, uint64_t node_id, bool check_pending);
+
+int removeCatchUpNode(
+        raft::RaftConfig& config, uint64_t node_id);
+
+raft::RaftConfig buildTestConfig();
 
 
 

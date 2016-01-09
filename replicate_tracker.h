@@ -4,6 +4,7 @@
 #include <set>
 #include <vector>
 #include <memory>
+#include <functional>
 #include <stdint.h>
 
 
@@ -12,38 +13,31 @@ namespace raft {
 
 class Message;
 class ConfChange;
-class RaftImpl;
-class RaftConfig;
 
+using BuildMsgCB = std::function<
+    std::unique_ptr<Message>(uint64_t, uint64_t, size_t)>;
 
 class ReplicateTracker {
 
 public:
     ReplicateTracker(
-            const RaftConfig& current_config, 
+            uint64_t selfid, 
+            const std::set<uint64_t>& replicate_group, 
             uint64_t last_log_index, 
             size_t max_batch_size);
 
-    void AddNode(uint64_t peer_id, uint64_t last_log_index);
-
-    void RemoveNode(uint64_t peer_id);
-
     void UpdateSelfState(uint64_t last_log_index);
 
-    std::vector<std::unique_ptr<Message>>
-        BatchBuildMsgApp(RaftImpl& raft_impl);
+    std::unique_ptr<Message>
+        BuildMsgApp(
+                uint64_t last_log_index, 
+                uint64_t peer_id, BuildMsgCB build_msg_cb);
 
     std::unique_ptr<Message>
-        BuildMsgApp(RaftImpl& raft_impl, uint64_t peer_id);
-
-    std::vector<std::unique_ptr<Message>>
-        BatchBuildMsgHeartbeat(RaftImpl& raft_impl);
-
-    std::unique_ptr<Message>
-        BuildMsgHeartbeat(RaftImpl& raft_impl, uint64_t peer_id);
+        BuildMsgHeartbeat(
+                uint64_t peer_id, BuildMsgCB build_msg_cb);
 
     bool UpdateReplicateState(
-            RaftImpl& raft_impl, 
             uint64_t peer_id, 
             bool reject, 
             uint64_t /* reject_hint */, 
@@ -57,6 +51,18 @@ public:
         return pending_;
     }
 
+    // add for test
+    const std::map<uint64_t, uint64_t> peekNextIndexes() const {
+        return next_indexes_;
+    }
+
+    const std::map<uint64_t, uint64_t> peekMatchIndexes() const {
+        return match_indexes_;
+    }
+
+    void AddNode(uint64_t peer_id, uint64_t last_log_index);
+
+    void RemoveNode(uint64_t peer_id);
 
 private:
 
@@ -65,11 +71,8 @@ private:
     void logdebugPeerState(uint64_t peer_id);
 
 private:
-    const RaftConfig& current_config_;
-//    uint64_t selfid_;
+    uint64_t selfid_;
     const size_t max_batch_size_;
-    // including selfid
-//    std::set<uint64_t> peer_ids_;
 
     std::map<uint64_t, uint64_t> next_indexes_;
     std::map<uint64_t, uint64_t> match_indexes_;

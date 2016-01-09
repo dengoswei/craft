@@ -118,11 +118,16 @@ public:
     int reconstructCurrentConfig();
 
     const RaftConfig& GetCurrentConfig() const {
-        return current_config;
+        return current_config_;
     }
 
     const RaftConfig& GetCommitedConfig() const {
-        return commited_config;
+        return commited_config_;
+    }
+
+    ReplicateTracker& GetReplicateTracker() {
+        assert(nullptr != replicate_states_);
+        return *replicate_states_;
     }
 
 public:
@@ -234,8 +239,8 @@ private:
     uint64_t logid_ = 0;
     uint64_t selfid_ = 0;
 
-    RaftConfig current_config;
-    RaftConfig commited_config;
+    RaftConfig current_config_;
+    RaftConfig commited_config_;
 
 //    std::set<uint64_t> peer_ids_;
 //    // FOR: add catch-up node: 
