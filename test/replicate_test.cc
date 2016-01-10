@@ -28,7 +28,6 @@ void checkConsistence(RaftConfig& config, ReplicateTracker& replicate)
 TEST(TestReplicateTracker, Create)
 {
     auto config = buildTestConfig();
-    
     const uint64_t last_log_index = 0ull;
     auto replicate_tracker = 
         config.CreateReplicateTracker(last_log_index, size_t{10});
@@ -62,12 +61,10 @@ TEST(TestReplicateTracker, Create)
 TEST(TestReplicateTracker, AddRemoveNode)
 {
     auto config = buildTestConfig();
-
     auto replicate = config.CreateReplicateTracker(0ull, size_t{10});
     assert(nullptr != replicate);
     
     checkConsistence(config, *replicate);
-
     // 1. add node
     {
         assert(0 == addCatchUpNode(config, 4ull));
@@ -85,8 +82,75 @@ TEST(TestReplicateTracker, AddRemoveNode)
 
 TEST(TestReplicateTracker, UpdateReplicateState)
 {
+    auto config = buildTestConfig();
+    auto replicate = config.CreateReplicateTracker(0ull, size_t{10});
+    assert(nullptr != replicate);
 
+    // 1.
+    {
+        auto peer_id = 2ull;
+        auto peer_next_index = 2ull;
+        auto update = 
+            replicate->UpdateReplicateState(
+                    peer_id, false, 0ull, peer_next_index);
+        assert(true == update);
+        assert(peer_next_index == 
+                replicate->peekNextIndexes().at(peer_id)); 
+        assert(peer_next_index - 1ull == 
+                replicate->peekMatchIndexes().at(peer_id));
+        printf ( "%zu\n", replicate->peekNextBatchSizes().at(peer_id) );
+        assert(size_t{2} == replicate->peekNextBatchSizes().at(peer_id));
+    }
 
+    // 2.
+    {
+        auto peer_id = 2ull;
+        auto peer_next_index = 2ull;
+        auto update = 
+            replicate->UpdateReplicateState(
+                    peer_id, false, 0ull, peer_next_index);
+        assert(false == update);
+        assert(size_t{2} == replicate->peekNextBatchSizes().at(peer_id));
+    }
+
+    // 3.
+    {
+        auto peer_id = 2ull;
+        auto peer_next_index = 1ull;
+        auto update = 
+            replicate->UpdateReplicateState(
+                    peer_id, false, 0ull, peer_next_index);
+        assert(false == update);
+        assert(size_t{2} == replicate->peekNextBatchSizes().at(peer_id));
+    }
+
+    // update all
+    for (auto peer_id : config.GetReplicateGroup()) {
+        auto peer_next_index = 3ull;
+        auto update = replicate->UpdateReplicateState(
+                peer_id, false, 0ull, peer_next_index);
+        assert(true == update);
+        assert(size_t{2} <= replicate->peekNextBatchSizes().at(peer_id));
+    }
+
+    // reset replicate
+    replicate = config.CreateReplicateTracker(10ull, size_t{10});
+    assert(nullptr != replicate);
+    // 1.
+    for (auto peer_id : config.GetReplicateGroup()) {
+        if (peer_id == config.GetSelfId()) {
+            continue;
+        }
+
+        auto peer_next_index = 0ull;
+        auto update = 
+            replicate->UpdateReplicateState(
+                peer_id, true, 0ull, peer_next_index);
+        assert(true == update);
+        assert(0 == replicate->peekMatchIndexes().at(peer_id));
+        assert(5ull == replicate->peekNextIndexes().at(peer_id));
+        assert(size_t{0} == replicate->peekNextBatchSizes().at(peer_id));
+    }
 }
 
 

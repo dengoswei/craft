@@ -242,14 +242,6 @@ private:
     RaftConfig current_config_;
     RaftConfig commited_config_;
 
-//    std::set<uint64_t> peer_ids_;
-//    // FOR: add catch-up node: 
-//    // => recv MsgApp but don't count as majority
-//    std::set<uint64_t> app_peer_ids_;
-//    // FOR: member-ship change
-//    std::set<uint64_t> old_peer_ids_;
-//    std::set<uint64_t> new_peer_ids_;
-
     uint64_t term_ = 0;
     uint64_t vote_for_ = 0;
     uint64_t commited_index_ = 0;
@@ -264,7 +256,6 @@ private:
     uint64_t pending_log_seq_ = 0;
 
     RandomTimeout rtimeout_;
-
     std::chrono::milliseconds election_timeout_;
     std::chrono::time_point<std::chrono::system_clock> active_time_;
 
@@ -280,10 +271,7 @@ private:
     // TODO:
     // trace peer_ids need log entries not in mem
     std::set<uint64_t> ids_not_in_mem_;
-    // std::map<uint64_t, uint64_t> probe_indexes_; // last reject index
 };
 
 
 } // namespace raft;
-
-

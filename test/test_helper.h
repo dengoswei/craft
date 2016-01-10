@@ -154,6 +154,12 @@ batchBuildMsgProp(
 std::unique_ptr<raft::Message>
     buildMsgNull(uint64_t to_id, uint64_t logid, uint64_t term);
 
+std::unique_ptr<raft::Message>
+    buildMsgPropConf(
+            uint64_t logid, uint64_t leader_id, 
+            uint64_t term, uint64_t prev_index, 
+            const raft::ConfChange& conf_change);
+
 int applyConfChange(
         raft::RaftConfig& config, 
         raft::ConfChangeType change_type, 

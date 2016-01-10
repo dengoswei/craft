@@ -338,6 +338,53 @@ TEST(TestRaftLeaderElectionImpl, ElectionWithFailedNode)
     assert(leader->getTerm() == map_raft[failed_id]->getTerm());
 }
 
+TEST(TestRaftLeaderElectionImpl, MayTimeout)
+{
+    auto logid = test::LOGID;
+    auto group_ids = test::GROUP_IDS;
+
+    // case 1
+    // : follower not in group_ids => won't timeout
+    {
+        auto selfid = 4ull;
+        assert(group_ids.end() == group_ids.find(selfid));
+        auto raft = make_unique<RaftImpl>(
+                logid, selfid, group_ids, 10, 20);
+        assert(nullptr != raft);
+
+        raft->makeElectionTimeout(chrono::system_clock::now());
+        auto msg_null = buildMsgNull(selfid, logid, 0ull);
+        assert(nullptr != msg_null);
+
+        auto rsp_msg_type = raft->step(*msg_null);
+        assert(MessageType::MsgNull == rsp_msg_type);
+        assert(RaftRole::FOLLOWER == raft->getRole());
+    }
+
+    // case 2
+    // : candidate not in current_config.group_ids 
+    //   => won't timeout, step back to follower
+    auto selfid = 4ull;
+    auto new_group_ids = group_ids;
+    new_group_ids.insert(selfid);
+    {
+        assert(new_group_ids.end() != new_group_ids.find(selfid));
+        auto raft = make_unique<RaftImpl>(
+                logid, selfid, new_group_ids, 10, 20);
+        assert(nullptr != raft);
+
+        assert(RaftRole::FOLLOWER == raft->getRole());
+        raft->makeElectionTimeout(chrono::system_clock::now());
+        {
+            auto msg_null = buildMsgNull(selfid, logid, 0ull);
+            assert(nullptr != msg_null);
+            auto rsp_msg_type = raft->step(*msg_null);
+            assert(MessageType::MsgVote == rsp_msg_type);
+        }
+        assert(RaftRole::CANDIDATE == raft->getRole());
+    }
+}
+
 TEST(TestRaftLeaderElection, SimpleElectionSucc)
 {
     SendHelper sender;
@@ -517,4 +564,7 @@ TEST(TestRaftLeaderElection, ElectionWithFailedNode)
     assert(true == map_raft[failed_id]->IsFollower());
     assert(leader->GetTerm() == map_raft[failed_id]->GetTerm());
 }
+
+
+
 

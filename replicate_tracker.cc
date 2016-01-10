@@ -57,6 +57,8 @@ void ReplicateTracker::RemoveNode(uint64_t peer_id)
 
 void ReplicateTracker::UpdateSelfState(uint64_t last_log_index)
 {
+    assert(last_seen_index_ <= last_log_index);
+    last_seen_index_ = last_log_index;
     if (next_indexes_.end() == next_indexes_.find(selfid_)) {
         return ;
     }
@@ -126,17 +128,10 @@ bool ReplicateTracker::UpdateReplicateState(
     }
 
     assert(next_indexes_.end() != next_indexes_.find(peer_id));
-    if (peer_next_index < next_indexes_[peer_id]) {
-        // out-date msg
-        return false;
-    }
-
-    assert(peer_next_index >= next_indexes_[peer_id]);
-    // reset pending_ mark;
-    pending_[peer_id] = false;
-    logdebug("reset pending_ false peer_id %" PRIu64, peer_id);
     if (true == reject) {
-        assert(next_indexes_[peer_id] > match_indexes_[peer_id] + 1ull);
+        pending_[peer_id] = false;
+        assert(next_indexes_[peer_id] > 
+                match_indexes_[peer_id] + 1ull);
 
         // decrease next_indexes_ & next_batch_size
         // TODO: use reject_hint ?
@@ -144,14 +139,29 @@ bool ReplicateTracker::UpdateReplicateState(
             (next_indexes_[peer_id] - match_indexes_[peer_id]) / 2 + 
             match_indexes_[peer_id];
         assert(next_peer_index > match_indexes_[peer_id]);
-        assert(next_peer_index < next_indexes_[peer_id]);
+        assert(next_peer_index <= next_indexes_[peer_id]);
+
+        next_batch_sizes_[peer_id] = next_batch_sizes_[peer_id] / 2;
+        if (next_peer_index == next_indexes_[peer_id]) {
+            logerr("selfid %" PRIu64 " possible fake leader", selfid_);
+            return false;
+        }
 
         next_indexes_[peer_id] = next_peer_index;
-        next_batch_sizes_[peer_id] = next_batch_sizes_[peer_id] / 2;
         return true;
     }
 
     assert(false == reject);
+    logdebug("peer_next_index %" PRIu64 
+            " next_indexes_[%" PRIu64 "] %" PRIu64, 
+            peer_next_index, peer_id, next_indexes_[peer_id]);
+    if (peer_next_index < next_indexes_[peer_id]) {
+        // out-date msg
+        return false;
+    }
+
+    pending_[peer_id] = false;
+    assert(peer_next_index >= next_indexes_[peer_id]);
     assert(match_indexes_[peer_id] < next_indexes_[peer_id]);
 
     // update next_batch_sizes to at least 1 anyway

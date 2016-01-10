@@ -1,3 +1,4 @@
+#include <sstream>
 #include "test_helper.h"
 #include "raft_impl.h"
 #include "raft_config.h"
@@ -495,6 +496,38 @@ buildMsgProp(
 
         entry->set_type(EntryType::EntryNormal);
         entry->set_data(str_gen.Next());
+    }
+
+    return prop_msg;
+}
+
+std::unique_ptr<raft::Message>
+buildMsgPropConf(
+        uint64_t logid, uint64_t leader_id, 
+        uint64_t term, uint64_t prev_index, 
+        const raft::ConfChange& conf_change)
+{
+    assert(0ull < leader_id);
+    assert(0ull < term);
+    assert(0ull <= prev_index);
+
+    auto prop_msg = make_unique<Message>();
+    assert(nullptr != prop_msg);
+
+    prop_msg->set_logid(logid);
+    prop_msg->set_type(MessageType::MsgProp);
+    prop_msg->set_to(leader_id);
+    prop_msg->set_term(term);
+    prop_msg->set_index(prev_index);
+
+    auto entry = prop_msg->add_entries();
+    assert(nullptr != entry);
+    entry->set_type(EntryType::EntryConfChange);
+    {
+        stringstream ss;
+        assert(true == conf_change.SerializeToOstream(&ss));
+        entry->set_data(ss.str());
+        assert(false == entry->data().empty());
     }
 
     return prop_msg;

@@ -115,24 +115,22 @@ size_t truncateLogs(
     return prev_size - logs.size();
 }
 
-void appendBroadcastMsg(
-        std::vector<std::unique_ptr<Message>>& vec_msg, 
-        const std::set<uint64_t>& group_ids, 
-        const Message& msg_template)
-{
-
-    // TODO
-    for (auto peer_id : group_ids) {
-        if (msg_template.from() == peer_id) {
-            continue;
-        }
-
-        vec_msg.emplace_back(make_unique<Message>(msg_template));
-        auto& msg = vec_msg.back();
-        assert(nullptr != msg);
-        msg->set_to(peer_id);
-    }
-}
+//void appendBroadcastMsg(
+//        std::vector<std::unique_ptr<Message>>& vec_msg, 
+//        const std::set<uint64_t>& group_ids, 
+//        const Message& msg_template)
+//{
+//    for (auto peer_id : group_ids) {
+//        if (msg_template.from() == peer_id) {
+//            continue;
+//        }
+//
+//        vec_msg.emplace_back(make_unique<Message>(msg_template));
+//        auto& msg = vec_msg.back();
+//        assert(nullptr != msg);
+//        msg->set_to(peer_id);
+//    }
+//}
 
 
 inline bool IsAGroupMember(
@@ -155,7 +153,10 @@ int ApplyConfChange(
         const Entry& conf_entry, bool check_pending, 
         ConfChange& conf_change, RaftConfig& raft_config)
 {
-    if (EntryType::EntryConfChange == conf_entry.type()) {
+    if (EntryType::EntryConfChange != conf_entry.type()) {
+        logerr("expectecd %d but conf_entry.type %d", 
+                static_cast<int>(EntryType::EntryConfChange), 
+                static_cast<int>(conf_entry.type()));
         return -1;
     }
 
@@ -380,10 +381,13 @@ MessageType onTimeout(
     logdebug("selfid(candidate) %" PRIu64 " term %" PRIu64, 
             raft_impl.getSelfId(), raft_impl.getTerm());
 
-    if (false == IsAGroupMember(raft_impl, raft_impl.getSelfId(), true)) {
-        raft_impl.becomeFollower(raft_impl.getTerm()); // step back as follower;
-        return MessageType::MsgNull;
-    }
+    assert(true == IsAGroupMember(raft_impl, raft_impl.getSelfId(), true));
+//    if (false == 
+//    IsAGroupMember(raft_impl, raft_impl.getSelfId(), true)) {
+//        raft_impl.becomeFollower(raft_impl.getTerm()); 
+//        // step back as follower;
+//        return MessageType::MsgNull;
+//    }
 
     // raft paper:
     // Candidates 5.2
@@ -500,17 +504,29 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
 
             // collect appendEntry resp
             // TODO: update commited!
-            bool update = raft_impl.updateReplicateState(
+            bool update = 
+                raft_impl.updateReplicateState(
                     msg.from(), msg.reject(), 
                     msg.reject_hint(), msg.index());
             if (update) {
                 rsp_msg_type = MessageType::MsgApp;
+            } 
+            else {
+                assert(false == msg.reject());
+                if (1ull == msg.index() && 
+                        0ull < raft_impl.getLastLogIndex()) {
+                    // MsgApp prode reach match_index == 0ull
+                    // && leader log isn't empty;
+                    rsp_msg_type = MessageType::MsgApp;
+                }
             }
 
             logdebug("selfid(leader) %" PRIu64 
                     " MsgAppResp msg.from %" PRIu64
-                    " msg.index %" PRIu64 " reject %d rsp_msg_type %d", 
+                    " msg.index %" PRIu64 
+                    " update %d reject %d rsp_msg_type %d", 
                     raft_impl.getSelfId(), msg.from(), msg.index(), 
+                    static_cast<int>(update), 
                     static_cast<int>(msg.reject()), 
                     static_cast<int>(rsp_msg_type));
         }
@@ -522,7 +538,8 @@ MessageType onStepMessage(RaftImpl& raft_impl, const Message& msg)
                 // not a replicate member now
                 // => ignore this request
                 logerr("selfid %" PRIu64 
-                        " recv MsgHeartbeatResp from NotAReplicateMember %" PRIu64, 
+                        " recv MsgHeartbeatResp from "
+                        "NotAReplicateMember %" PRIu64, 
                         raft_impl.getSelfId(), msg.from());
                 break;
             }
@@ -573,8 +590,6 @@ RaftImpl::RaftImpl(
     , selfid_(selfid)
     , current_config_(selfid)
     , commited_config_(selfid)
-//    , peer_ids_(peer_ids)
-//    , app_peer_ids_(peer_ids)
     , rtimeout_(min_election_timeout, max_election_timeout)
     , election_timeout_(rtimeout_())
     , active_time_(chrono::system_clock::now())
@@ -925,10 +940,6 @@ RaftImpl::buildMsgApp(
         }
 
         return nullptr;
-//        assert(index == last_index + 1ull);
-//        app_msg->set_index(last_index); // only case
-//        app_msg->set_log_term(getLogTerm(last_index)); // 0ull
-//        return app_msg;
     }
 
     assert(size_t{0} <= last_index - index + 1ull);
@@ -952,84 +963,6 @@ RaftImpl::buildMsgApp(
             getSelfId(), peer_id, index, max_batch_size);
     return app_msg;
 }
-
-//std::vector<std::unique_ptr<Message>>
-//RaftImpl::batchBuildMsgAppUpToDate(size_t max_batch_size) 
-//{
-//    assert_role(*this, RaftRole::LEADER);
-//    assert(size_t{0} < max_batch_size);
-//
-//    vector<std::unique_ptr<Message>> vec_msg;
-//    const uint64_t prev_last_index = next_indexes_[selfid_];
-//    uint64_t last_index = getLastLogIndex();
-//    logdebug("prev_last_index %" PRIu64 " last_index %" PRIu64, 
-//            prev_last_index, last_index);
-//    if (prev_last_index == last_index + 1ull) {
-//        return vec_msg; // already up to date
-//    }
-//
-//    assert(prev_last_index < last_index + 1ull);
-//    for (auto peer_id : peer_ids_) {
-//        if (peer_id == getSelfId()) {
-//            continue;
-//        }
-//
-//        assert(next_indexes_.end() != next_indexes_.find(peer_id));
-//        logdebug("peer_id %" PRIu64 " prev_last_index %" PRIu64
-//                " next_indexes_ %" PRIu64 " vec_msg.size %zu", 
-//                peer_id, prev_last_index, next_indexes_[peer_id], 
-//                vec_msg.size());
-//        if (prev_last_index == next_indexes_[peer_id]) {
-//            auto msg_app = buildMsgApp(
-//                    peer_id, next_indexes_[peer_id], max_batch_size);
-//            if (nullptr != msg_app) {
-//                logdebug("peer_id %" PRIu64 " prev_last_index %" PRIu64
-//                        " next_index %" PRIu64 " max_batch_size %zu"
-//                        " entries_size %d", 
-//                        peer_id, prev_last_index, next_indexes_[peer_id], 
-//                        max_batch_size, msg_app->entries_size());
-//                vec_msg.emplace_back(move(msg_app));
-//            }
-//            assert(nullptr == msg_app);
-//        }
-//    }
-//
-//    next_indexes_[selfid_] = min(
-//            prev_last_index + max_batch_size, last_index + 1ull);
-//    match_indexes_[selfid_] = next_indexes_[selfid_];
-//    return vec_msg;
-//}
-//
-//std::vector<std::unique_ptr<Message>>
-//RaftImpl::batchBuildMsgApp(size_t max_batch_size)
-//{
-//    assert_role(*this, RaftRole::LEADER);
-//    assert(size_t{0} < max_batch_size);
-//
-//    vector<std::unique_ptr<Message>> vec_msg;
-//    uint64_t last_index = getLastLogIndex();
-//    for (auto peer_id : peer_ids_) {
-//        if (peer_id == getSelfId()) {
-//            continue;
-//        }
-//
-//        assert(next_indexes_.end() != next_indexes_.find(peer_id));
-//        assert(next_indexes_[peer_id] <= last_index + 1ull);
-//        if (next_indexes_[peer_id] != last_index + 1ull) {
-//            assert(next_indexes_[peer_id] < last_index + 1ull);
-//
-//            auto msg_app = buildMsgApp(
-//                    peer_id, next_indexes_[peer_id], max_batch_size);
-//            if (nullptr != msg_app) {
-//                vec_msg.emplace_back(move(msg_app));
-//            }
-//            assert(nullptr == msg_app);
-//        }
-//    }
-//
-//    return vec_msg;
-//}
-//
 
 std::unique_ptr<Message>
 RaftImpl::buildMsgHeartbeat(
@@ -1057,32 +990,6 @@ RaftImpl::buildMsgHeartbeat(
     hb_msg->set_commit(commited_index_);
     return hb_msg;
 }
-
-//std::vector<std::unique_ptr<Message>>
-//RaftImpl::batchBuildMsgHeartbeat()
-//{
-//    assert_role(*this, RaftRole::LEADER);
-//
-//    vector<std::unique_ptr<Message>> vec_msg;
-//    vec_msg.reserve(peer_ids_.size() - 1);
-//    for (auto peer_id : peer_ids_) {
-//        if (peer_id == getSelfId()) {
-//            continue;
-//        }
-//
-//        assert(next_indexes_.end() != next_indexes_.find(peer_id));
-//
-//        auto next_index = next_indexes_[peer_id];
-//        assert(0ull < next_index);
-//        auto hb_msg = buildMsgHeartbeat(peer_id, next_index);
-//
-//        assert(nullptr != hb_msg);
-//        vec_msg.emplace_back(move(hb_msg));
-//    }
-//    assert(vec_msg.size() == peer_ids_.size());
-//    return vec_msg;
-//}
-//
 
 bool RaftImpl::isUpToDate(
         uint64_t peer_log_term, uint64_t peer_max_index)
@@ -1149,6 +1056,7 @@ int RaftImpl::appendEntries(
     assert_role(*this, RaftRole::FOLLOWER);
     assert(leader_commited_index >= commited_index_);
 
+
     if (!isMatch(prev_log_index, prev_log_term)) {
         return -1;
     }
@@ -1191,7 +1099,7 @@ int RaftImpl::checkAndAppendEntries(
             auto ret = applyUnCommitedConfEntry(*entries[idx]);
             if (0 != ret) {
                 // drop conf change request
-                logerr("applyConfChange ret %d", ret);
+                logerr("applyUnCommitedConfEntry ret %d", ret);
                 return -2;
             }
         }
@@ -1386,7 +1294,6 @@ const Entry* RaftImpl::getLogEntry(uint64_t log_index) const
     }
 
     assert(0ull < log_index);
-    assert(false == logs_.empty());
     auto base_index = 0ull;
     auto last_index = 0ull;
     tie(base_index, last_index) = getInMemIndex();
@@ -1394,6 +1301,7 @@ const Entry* RaftImpl::getLogEntry(uint64_t log_index) const
         return nullptr;
     }
 
+    assert(false == logs_.empty());
     size_t idx = log_index - base_index;
     assert(0 <= idx && idx < logs_.size());
     assert(nullptr != logs_[idx]);
@@ -1499,8 +1407,6 @@ bool RaftImpl::isMajorVoteYes() const
     assert_role(*this, RaftRole::CANDIDATE);
 
     return current_config_.IsMajorVoteYes(vote_resps_);
-//    return isMajority(true, vote_resps_, 
-//            peer_ids_.size(), old_peer_ids_, new_peer_ids_);
 }
 
 bool RaftImpl::isMatch(uint64_t log_index, uint64_t log_term) const
@@ -1514,7 +1420,6 @@ bool RaftImpl::isMatch(uint64_t log_index, uint64_t log_term) const
 
     assert(0ull < log_index);
     assert(0ull < log_term);
-
     const uint64_t local_log_term = getLogTerm(log_index);
     if (local_log_term == log_term) {
         return true;
@@ -1579,11 +1484,12 @@ bool RaftImpl::updateReplicateState(
 {
     assert_role(*this, RaftRole::LEADER);
     assert(nullptr != replicate_states_);
-    bool update = replicate_states_->UpdateReplicateState(
+    bool update = 
+        replicate_states_->UpdateReplicateState(
             peer_id, reject, reject_hint, peer_next_index);
     if (true == update) {
-        assert(0ull < peer_next_index);
-        auto new_commited_index = peer_next_index - 1ull;
+        auto new_commited_index = 
+            0ull == peer_next_index ? 0ull : peer_next_index - 1ull;
         if (getTerm() == getLogTerm(new_commited_index) && 
                 new_commited_index > getCommitedIndex()) {
 
@@ -1596,58 +1502,7 @@ bool RaftImpl::updateReplicateState(
     }
 
     return update;
-//    return replicate_states_->UpdateReplicateState(
-//            *this, 
-//            peer_id, reject, reject_hint, peer_next_index);
 }
-// OLD updateReplicateState impl
-//    assert(peer_ids_.end() != peer_ids_.find(peer_id));
-//
-//    assert(0ull < next_indexes_[peer_id]);
-//    assert(next_indexes_[peer_id] > match_indexes_[peer_id]);
-//    if (true == reject) {
-//        assert(next_indexes_[peer_id] > match_indexes_[peer_id] + 1);
-//
-//        // decrease next_indexes_
-//        // TODO: use reject_hint ?
-//        uint64_t next_peer_index = 
-//            (next_indexes_[peer_id] - match_indexes_[peer_id]) / 2 + 
-//            match_indexes_[peer_id];
-//        assert(next_peer_index > match_indexes_[peer_id]);
-//        assert(next_peer_index < next_indexes_[peer_id]);
-//        next_indexes_[peer_id] = next_peer_index;
-//        return true;
-//    }
-//
-//    assert(false == reject);
-//    if (match_indexes_[peer_id] > peer_next_index || 
-//            1ull >= peer_next_index) {
-//        return false; // update nothing
-//    }
-//
-//    assert(0ull < peer_next_index);
-//
-//    const auto new_match_index = peer_next_index - 1ull;
-//    assert(match_indexes_[peer_id] < new_match_index);
-//    match_indexes_[peer_id] = new_match_index;
-//
-//    if (getTerm() == getLogTerm(new_match_index) && 
-//            new_match_index > getCommitedIndex()) {
-//        // update commited_index_
-//        // raft paper: joint consensus
-//        // Agreement(for elections and entry commitment) requires
-//        // seperate majorities from both the old and nwe configrations.
-//        // TODO
-//        if (isMajority(new_match_index, match_indexes_, 
-//                    peer_ids_.size(), old_peer_ids_, new_peer_ids_)) {
-//            updateLeaderCommitedIndex(new_match_index);
-//        }
-//    }
-//
-//    next_indexes_[peer_id] = max(next_indexes_[peer_id], peer_next_index);
-//    return true;
-//}
-
 
 void RaftImpl::becomeFollower(uint64_t term)
 {
@@ -1796,15 +1651,6 @@ void RaftImpl::resetElectionTimeout()
     election_timeout_ = chrono::milliseconds{next_election_timeout};
 }
 
-//bool RaftImpl::confirmMajority(
-//        uint64_t major_match_index, 
-//        const std::map<uint64_t, uint64_t>& match_indexes) const 
-//{
-//    return isMajority(
-//            major_match_index, match_indexes, peer_ids_.size(), 
-//            old_peer_ids_, new_peer_ids_);
-//}
-
 bool RaftImpl::isPeerUpToDate(uint64_t peer_commited_index) const
 {
     assert(peer_commited_index <= commited_index_);
@@ -1849,23 +1695,6 @@ int RaftImpl::applyCommitedConfEntry(const Entry& conf_entry)
     return ApplyConfChange(conf_entry, false, conf_change, commited_config_);
 }
 
-//bool RaftImpl::isAValidPeer(uint64_t peer_id, MessageType msg_type)
-//{
-//    assert(RaftRole::LEADER == getRole());
-//    switch (msg_type) {
-//        case MessageType::MsgProp:         
-//            return 0ull == peer_id;
-//
-//        case MessageType::MsgAppResp:
-//            return current_config_.IsAReplicateMember(peer_id);
-//
-//        case MessageType::MsgHeartbeatResp:
-//            return current_config_.IsAReplicateMember(peer_id);
-//    }
-//    // invalid msg type!!!
-//    return true;
-//}
-
 int RaftImpl::reconstructCurrentConfig()
 {
     assert(RaftRole::FOLLOWER == getRole());
@@ -1890,5 +1719,3 @@ int RaftImpl::reconstructCurrentConfig()
 }
 
 } // namespace raft
-
-

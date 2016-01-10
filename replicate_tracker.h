@@ -60,6 +60,10 @@ public:
         return match_indexes_;
     }
 
+    const std::map<uint64_t, size_t> peekNextBatchSizes() const {
+        return next_batch_sizes_;
+    }
+
     void AddNode(uint64_t peer_id, uint64_t last_log_index);
 
     void RemoveNode(uint64_t peer_id);
@@ -71,8 +75,9 @@ private:
     void logdebugPeerState(uint64_t peer_id);
 
 private:
-    uint64_t selfid_;
-    const size_t max_batch_size_;
+    uint64_t selfid_ = 0ull;
+    const size_t max_batch_size_ = size_t{0};
+    uint64_t last_seen_index_ = 0ull;
 
     std::map<uint64_t, uint64_t> next_indexes_;
     std::map<uint64_t, uint64_t> match_indexes_;

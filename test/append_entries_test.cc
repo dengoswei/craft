@@ -256,6 +256,94 @@ TEST(TestRaftAppendEntriesImpl, RepeatAppendTest)
     }
 }
 
+TEST(TestRaftAppendEntriesImpl, AppendAndAddNode)
+{
+    uint64_t logid = 0ull;
+    set<uint64_t> group_ids;
+    map<uint64_t, unique_ptr<raft::RaftImpl>> map_raft;
+
+    uint64_t leader_id = 1ull;
+    tie(logid, group_ids, map_raft) = comm_init(leader_id, 30, 40);
+
+    auto& raft = map_raft[leader_id];
+    assert(nullptr != raft);
+    assert(RaftRole::LEADER == raft->getRole());
+
+    // append test
+    for (int i = 0; i < 2; ++i) {
+        raft->assertNoPending();
+        vector<unique_ptr<Message>> vec_msg;
+        {
+            auto prop_msg = buildMsgProp(
+                    logid, leader_id, raft->getTerm(), 
+                    raft->getLastLogIndex(), 1);
+            assert(nullptr != prop_msg);
+            vec_msg.emplace_back(move(prop_msg));
+        }
+
+        updateAllActiveTime(map_raft);
+        apply_until(map_raft, move(vec_msg));
+    }
+
+    // add new raft:
+    uint64_t new_peer_id = 4ull;
+    assert(group_ids.end() == group_ids.find(new_peer_id));
+    {
+        {
+            auto new_raft = make_unique<RaftImpl>(
+                    logid, new_peer_id, group_ids, 30, 40);
+            assert(nullptr != new_raft);
+            assert(map_raft.end() == map_raft.find(new_peer_id));
+            map_raft[new_peer_id] = move(new_raft);
+            assert(nullptr == new_raft);
+        }
+
+        vector<unique_ptr<Message>> vec_msg;
+        {
+            ConfChange conf_change;
+            conf_change.set_type(ConfChangeType::ConfChangeAddCatchUpNode);
+            conf_change.set_node_id(new_peer_id);
+            auto prop_msg = buildMsgPropConf(
+                    logid, leader_id, raft->getTerm(), 
+                    raft->getLastLogIndex(), conf_change);
+            assert(nullptr != prop_msg);
+            vec_msg.emplace_back(move(prop_msg));
+
+            updateAllActiveTime(map_raft);
+            apply_until(map_raft, move(vec_msg));
+        }
+
+        auto term = raft->getTerm();
+        auto last_log_index = raft->getLastLogIndex();
+        for (const auto& id_raft : map_raft) {
+            assert(nullptr != id_raft.second);
+            auto& config = raft->GetCurrentConfig();
+            assert(true == config.IsAReplicateMember(new_peer_id));
+            assert(false == config.IsAGroupMember(new_peer_id));
+            assert(term == id_raft.second->getTerm());
+            hassert(last_log_index == id_raft.second->getCommitedIndex(), 
+                    "%" PRIu64 "  %" PRIu64, 
+                    last_log_index, 
+                    id_raft.second->getCommitedIndex());
+        }
+
+        auto& new_raft = map_raft[new_peer_id];
+        assert(nullptr != new_raft);
+        for (auto log_index = 1ull; 
+                log_index < last_log_index + 1ull; ++log_index) {
+            auto expected_entry = raft->getLogEntry(log_index);
+            auto entry = new_raft->getLogEntry(log_index);
+            assert(nullptr != expected_entry);
+            assert(nullptr != entry);
+
+            assert(expected_entry->type() == entry->type());
+            assert(expected_entry->term() == entry->term());
+            assert(expected_entry->index() == entry->index());
+            assert(expected_entry->data() == entry->data());
+        }
+    }
+}
+
 
 TEST(TestRaftAppendEntries, RepeatBatchAppendTest)
 {
