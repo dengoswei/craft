@@ -23,7 +23,8 @@ struct RaftCallBack {
             std::unique_ptr<raft::HardState>&&, 
             std::vector<std::unique_ptr<raft::Entry>>&&)> write;
 
-    std::function<int(std::vector<std::unique_ptr<raft::Message>>&&)> send;
+    std::function<
+        int(std::vector<std::unique_ptr<raft::Message>>&&)> send;
 };
 
 

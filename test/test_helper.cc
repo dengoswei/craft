@@ -457,10 +457,12 @@ void SendHelper::apply_until(
         return msg_queue_.empty();
     };
 
+    int count = 0;
     while (false == check_empty()) {
+        ++count;
         size_t apply_count = apply(map_raft);
-        logdebug("apply_count %zu msg_queue_.size %zu", 
-                apply_count, msg_queue_.size());
+        logdebug("APPLY_INFO count %d apply_count %zu", 
+                count, apply_count);
     }
 }
 
