@@ -1,6 +1,7 @@
 #include "raft.h"
 #include "raft_impl.h"
 #include "log.h"
+#include "mem_utils.h"
 
 using namespace std;
 
@@ -12,7 +13,7 @@ std::unique_ptr<Message> buildPropMsg(
         uint64_t prev_index, 
         const std::vector<std::string>& entries)
 {
-    auto msg = make_unique<Message>();
+    auto msg = cutils::make_unique<Message>();
     assert(nullptr != msg);
 
     msg->set_index(prev_index);
@@ -44,7 +45,7 @@ Raft::Raft(
         RaftCallBack callback)
     : logid_(logid)
     , selfid_(selfid)
-    , raft_impl_(make_unique<RaftImpl>(
+    , raft_impl_(cutils::make_unique<RaftImpl>(
                 logid, selfid, group_ids, 
                 min_election_timeout, max_election_timeout))
     , callback_(callback)

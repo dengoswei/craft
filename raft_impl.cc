@@ -4,6 +4,7 @@
 #include "replicate_tracker.h"
 #include "time_utils.h"
 #include "hassert.h"
+#include "mem_utils.h"
 
 using namespace std;
 
@@ -693,7 +694,7 @@ RaftImpl::produceRsp(
         // - voteGranted
         assert(0ull != req_msg.from());
 
-        vec_msg.emplace_back(make_unique<Message>(msg_template));
+        vec_msg.emplace_back(cutils::make_unique<Message>(msg_template));
         auto& rsp_msg = vec_msg.back();
         assert(nullptr != rsp_msg);
         rsp_msg->set_reject(req_msg.from() != getVoteFor());
@@ -764,7 +765,7 @@ RaftImpl::produceRsp(
         //   whose term matchs prevLogTerm
         assert(0ull != req_msg.from());
 
-        vec_msg.emplace_back(make_unique<Message>(msg_template));
+        vec_msg.emplace_back(cutils::make_unique<Message>(msg_template));
         auto& rsp_msg = vec_msg.back();
         assert(nullptr != rsp_msg);
 
@@ -829,7 +830,7 @@ RaftImpl::produceRsp(
         // rsp to leader
         assert(req_msg.from() == getLeader());
         
-        vec_msg.emplace_back(make_unique<Message>(msg_template));
+        vec_msg.emplace_back(cutils::make_unique<Message>(msg_template));
         auto& rsp_msg = vec_msg.back();
         assert(nullptr != rsp_msg);
 
@@ -883,7 +884,7 @@ RaftImpl::buildMsgApp(
     // - leaderCommit
     assert(size_t{0} <= max_batch_size);
     assert(0ull < index);
-    auto app_msg = make_unique<Message>();
+    auto app_msg = cutils::make_unique<Message>();
     assert(nullptr != app_msg);
 
     app_msg->set_type(MessageType::MsgApp);
@@ -940,7 +941,7 @@ RaftImpl::buildMsgHeartbeat(
         uint64_t peer_id, uint64_t next_index) const
 {
     assert(0ull < next_index);
-    auto hb_msg = make_unique<Message>();
+    auto hb_msg = cutils::make_unique<Message>();
     assert(nullptr != hb_msg);
 
     hb_msg->set_type(MessageType::MsgHeartbeat);
@@ -953,8 +954,8 @@ RaftImpl::buildMsgHeartbeat(
     uint64_t base_index = 0ull;
     uint64_t last_index = 0ull;
     tie(base_index, last_index) = getInMemIndex();
-    next_index = max(base_index + 1ull, next_index);
-    next_index = min(last_index + 1ull, next_index);
+    next_index = max(base_index + 1, next_index);
+    next_index = min(last_index + 1, next_index);
 
     hb_msg->set_index(next_index - 1ull);
     hb_msg->set_log_term(getLogTerm(next_index - 1ull));
@@ -1011,7 +1012,7 @@ int RaftImpl::appendLogs(const std::vector<const Entry*>& entries)
             applyCommitedConfEntry(*entries[idx]);
         }
 
-        logs_.emplace_back(make_unique<Entry>(*entries[idx]));
+        logs_.emplace_back(cutils::make_unique<Entry>(*entries[idx]));
         assert(nullptr != logs_.back());
     }
 
@@ -1076,7 +1077,7 @@ int RaftImpl::checkAndAppendEntries(
         }
 
         logs_.emplace_back(
-                make_unique<Entry>(*entries[idx]));
+                cutils::make_unique<Entry>(*entries[idx]));
         assert(nullptr != logs_.back());
         logs_.back()->set_term(term_);
         logs_.back()->set_index(last_index + 1ull + idx);
@@ -1301,7 +1302,7 @@ RaftImpl::getLogEntriesAfter(uint64_t log_index) const
         assert(nullptr != entry);
         assert(index == entry->index());
         vec_entries.emplace_back(
-                make_unique<Entry>(*entry));
+                cutils::make_unique<Entry>(*entry));
         assert(nullptr != vec_entries.back());
         vec_entries.back()->set_seq(pending_log_seq_);
     }
@@ -1312,7 +1313,7 @@ RaftImpl::getLogEntriesAfter(uint64_t log_index) const
 std::unique_ptr<raft::HardState>
 RaftImpl::getCurrentHardState() const 
 {
-    auto hs = make_unique<HardState>();
+    auto hs = cutils::make_unique<HardState>();
     assert(nullptr != hs);
     hs->set_term(term_);
     hs->set_vote(vote_for_);
@@ -1618,7 +1619,8 @@ void RaftImpl::resetElectionTimeout()
     int next_election_timeout = rtimeout_();
     assert(0 < next_election_timeout);
     logdebug("election_timeout_ %d next_election_timeout %d", 
-            election_timeout_.count(), next_election_timeout);
+            static_cast<int>(election_timeout_.count()), 
+            next_election_timeout);
     election_timeout_ = chrono::milliseconds{next_election_timeout};
 }
 

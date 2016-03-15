@@ -6,6 +6,7 @@
 #include "test_helper.h"
 #include "log.h"
 #include "hassert.h"
+#include "mem_utils.h"
 
 
 using namespace raft;
@@ -283,7 +284,7 @@ TEST(TestRaftAppendEntriesImpl, AppendAndAddNode)
     assert(group_ids.end() == group_ids.find(new_peer_id));
     {
         {
-            auto new_raft = make_unique<RaftImpl>(
+            auto new_raft = cutils::make_unique<RaftImpl>(
                     logid, new_peer_id, group_ids, 30, 40);
             assert(nullptr != new_raft);
             assert(map_raft.end() == map_raft.find(new_peer_id));

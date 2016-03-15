@@ -9,12 +9,11 @@
 #include "log.h"
 #include "random_utils.h"
 #include "hassert.h"
+#include "mem_utils.h"
 
 using namespace raft;
 using namespace std;
 using namespace test;
-using namespace cutils;
-
 
 // leaderid, term
 std::tuple<uint64_t, uint64_t>
@@ -101,7 +100,7 @@ TEST(TestRaftLeaderElectionImpl, SimpleElectionSucc)
 
     // to trigger timeout
     // TODO: add MsgElection: to start a election
-    auto fake_msg = make_unique<Message>();
+    auto fake_msg = cutils::make_unique<Message>();
     assert(nullptr != fake_msg);
     fake_msg->set_logid(logid);
     fake_msg->set_type(MessageType::MsgNull);
@@ -230,7 +229,7 @@ TEST(TestRaftLeaderElectionImpl, EmptyStateRepeatElectionSucc)
 
         uint64_t peer_id = prev_leader_id;
         while (peer_id == prev_leader_id) {
-            peer_id = static_cast<uint64_t>(random_int(1, 3));
+            peer_id = static_cast<uint64_t>(cutils::random_int(1, 3));
             assert(0ull < peer_id);
         }
 
@@ -352,7 +351,7 @@ TEST(TestRaftLeaderElectionImpl, MayTimeout)
     {
         auto selfid = 4ull;
         assert(group_ids.end() == group_ids.find(selfid));
-        auto raft = make_unique<RaftImpl>(
+        auto raft = cutils::make_unique<RaftImpl>(
                 logid, selfid, group_ids, 10, 20);
         assert(nullptr != raft);
 
@@ -373,7 +372,7 @@ TEST(TestRaftLeaderElectionImpl, MayTimeout)
     new_group_ids.insert(selfid);
     {
         assert(new_group_ids.end() != new_group_ids.find(selfid));
-        auto raft = make_unique<RaftImpl>(
+        auto raft = cutils::make_unique<RaftImpl>(
                 logid, selfid, new_group_ids, 10, 20);
         assert(nullptr != raft);
 
@@ -473,7 +472,7 @@ TEST(TestRaftLeaderElection, EmptyStateRepeatElectionSucc)
 
         uint64_t peer_id = prev_leader_id;
         while (peer_id == prev_leader_id) {
-            peer_id = static_cast<uint64_t>(random_int(1, 3));
+            peer_id = static_cast<uint64_t>(cutils::random_int(1, 3));
             assert(0ull < peer_id);
         }
 

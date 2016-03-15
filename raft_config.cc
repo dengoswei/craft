@@ -3,6 +3,8 @@
 #include "utils.h"
 #include "replicate_tracker.h"
 #include "log.h"
+#include "mem_utils.h"
+
 
 
 using namespace std;
@@ -23,7 +25,7 @@ std::vector<std::unique_ptr<Message>>
         }
 
         vec_msg.emplace_back(
-                make_unique<Message>(msg_template));
+                cutils::make_unique<Message>(msg_template));
         auto& msg = vec_msg.back();
         assert(nullptr != msg);
         msg->set_to(peer_id);
@@ -227,7 +229,7 @@ std::unique_ptr<ReplicateTracker>
 RaftConfig::CreateReplicateTracker(
         uint64_t last_log_index, size_t max_batch_size) const
 {
-    return make_unique<ReplicateTracker>(
+    return cutils::make_unique<ReplicateTracker>(
             selfid_, replicate_group_ids_, last_log_index, max_batch_size);
 }
 

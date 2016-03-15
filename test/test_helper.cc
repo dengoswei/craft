@@ -7,6 +7,7 @@
 #include "utils.h"
 #include "log.h"
 #include "time_utils.h"
+#include "mem_utils.h"
 
 
 
@@ -97,7 +98,7 @@ std::map<uint64_t, std::unique_ptr<raft::RaftImpl>>
 {
     map<uint64_t, unique_ptr<RaftImpl>> map_raft;
     for (auto id : group_ids) {
-        auto raft = make_unique<RaftImpl>(
+        auto raft = cutils::make_unique<RaftImpl>(
                 logid, id, group_ids, 
                 min_election_timeout, max_election_timeout);
         assert(nullptr != raft);
@@ -134,7 +135,7 @@ void init_leader(
 
     vector<unique_ptr<Message>> vec_msg;
     {
-        auto fake_msg = make_unique<Message>();
+        auto fake_msg = cutils::make_unique<Message>();
         fake_msg->set_logid(logid);
         fake_msg->set_type(MessageType::MsgNull);
         fake_msg->set_to(leader_id);
@@ -186,7 +187,7 @@ build_raft(
     assert(min_election_timeout <= max_election_timeout);
 
     assert(group_ids.end() != group_ids.find(selfid));
-    return make_unique<Raft>(
+    return cutils::make_unique<Raft>(
             logid, selfid, group_ids, 
             min_election_timeout, max_election_timeout, callback);
 }
@@ -205,7 +206,7 @@ build_rafts(
 
     for (auto id : group_ids) {
         assert(map_store.end() == map_store.find(id));
-        map_store[id] = make_unique<StorageHelper>();
+        map_store[id] = cutils::make_unique<StorageHelper>();
         assert(nullptr != map_store[id]);
 
         StorageHelper* store = map_store[id].get();
@@ -300,7 +301,7 @@ comm_init(
             logid, group_ids, sender, min_election_timeout, max_election_timeout);
 //    for (auto id : group_ids) {
 //        assert(map_store.end() == map_store.find(id));
-//        map_store[id] = make_unique<StorageHelper>();
+//        map_store[id] = cutils::make_unique<StorageHelper>();
 //        assert(nullptr != map_store[id]);
 //
 //        StorageHelper* store = map_store[id].get();
@@ -413,7 +414,7 @@ std::unique_ptr<raft::Entry> StorageHelper::read(uint64_t log_index)
     assert(entry->index() == log_index);
 //    logdebug("seq %" PRIu64 " index %" PRIu64 " term %" PRIu64, 
 //            entry->seq(), entry->index(), entry->term());
-    return make_unique<Entry>(*entry);
+    return cutils::make_unique<Entry>(*entry);
 }
 
 SendHelper::~SendHelper() = default;
@@ -486,7 +487,7 @@ buildMsgProp(
     assert(0ull < term);
     assert(0ull <= prev_index);
     assert(0 < entries_size);
-    auto prop_msg = make_unique<Message>();
+    auto prop_msg = cutils::make_unique<Message>();
     assert(nullptr != prop_msg);
 
     prop_msg->set_logid(logid);
@@ -517,7 +518,7 @@ buildMsgPropConf(
     assert(0ull < term);
     assert(0ull <= prev_index);
 
-    auto prop_msg = make_unique<Message>();
+    auto prop_msg = cutils::make_unique<Message>();
     assert(nullptr != prop_msg);
 
     prop_msg->set_logid(logid);
@@ -567,7 +568,7 @@ batchBuildMsgProp(
 std::unique_ptr<raft::Message>
 buildMsgNull(uint64_t to_id, uint64_t logid, uint64_t term)
 {
-    auto msg_null = make_unique<Message>();
+    auto msg_null = cutils::make_unique<Message>();
     
     msg_null->set_type(MessageType::MsgNull);
     msg_null->set_term(term);
