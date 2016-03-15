@@ -9,7 +9,8 @@ TESTS = utils_test leader_election_test \
 		config_test replicate_test
 
 INCLS += -I../ -I../craftpb 
-INCLS += -I$(HOME)/open-src/github.com/microsoft/GSL/include
+INCLS += -I../../cutils
+#INCLS += -I$(HOME)/open-src/github.com/microsoft/GSL/include
 INCLS += -I$(HOME)/project/include
 LINKS += -L$(HOME)/project/lib
 LINKS += -lpthread -lprotobuf
@@ -78,8 +79,7 @@ replicate_test: replicate_test.o ../raft_impl.o ../replicate_tracker.o \
 	$(BUILDEXE)
 
 
-store_test: store_test.o test_helper.o ../raft_impl.o \
-	../craftpb/raft.pb.o ../replicate_tracker.o gtest_main.a
+store_test: store_test.o test_helper.o ../libcraft.a gtest_main.a
 	$(BUILDEXE)
 
 benchmark_test: LINKS += -L/usr/local/lib

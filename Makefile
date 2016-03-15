@@ -5,7 +5,7 @@ CXXFLAGS += -g -Wall -Wextra # -D TEST_DEBUG
 TESTS = utils_test
 
 INCLS += -I./craftpb/
-INCLS += -I$(HOME)/open-src/github.com/microsoft/GSL/include
+INCLS += -I../cutils/
 INCLS += -I$(HOME)/project/include
 LINKS += -L$(HOME)/project/lib
 LINKS += -lpthread -lprotobuf

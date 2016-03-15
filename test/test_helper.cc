@@ -5,11 +5,15 @@
 #include "raft.h"
 #include "raft.pb.h"
 #include "utils.h"
+#include "log.h"
+#include "time_utils.h"
 
 
 
 using namespace std;
 using namespace raft;
+using cutils::TickTime;
+using cutils::RandomStrGen;
 
 namespace test {
 

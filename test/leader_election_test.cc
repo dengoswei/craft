@@ -6,10 +6,14 @@
 #include "utils.h"
 #include "raft.pb.h"
 #include "test_helper.h"
+#include "log.h"
+#include "random_utils.h"
+#include "hassert.h"
 
 using namespace raft;
 using namespace std;
 using namespace test;
+using namespace cutils;
 
 
 // leaderid, term

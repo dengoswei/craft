@@ -4,11 +4,14 @@
 #include "utils.h"
 #include "raft.pb.h"
 #include "test_helper.h"
+#include "log.h"
+#include "hassert.h"
 
 
 using namespace raft;
 using namespace std;
 using namespace test;
+using namespace cutils;
 
 std::vector<std::string> extract_value(
         const std::vector<std::unique_ptr<raft::Message>>& vec_msg)
@@ -62,16 +65,6 @@ std::vector<std::string> generatePropValue(int entries_size)
     return vec_value;
 }
 
-std::vector<gsl::cstring_view<>>
-buildPropValueView(const std::vector<std::string>& vec_value)
-{
-    vector<gsl::cstring_view<>> vec_view;
-    vec_view.reserve(vec_value.size());
-    for (const auto& value : vec_value) {
-        vec_view.emplace_back(value.data(), value.size());
-    }
-    return vec_view;
-}
 
 void checkValue(
         uint64_t base_index, 
@@ -396,12 +389,12 @@ TEST(TestRaftAppendEntries, SimpleAppendTest)
     assert(true == raft->IsLeader());
 
     auto vec_value = generatePropValue(1);
-    auto vec_view = buildPropValueView(vec_value);
+    // auto vec_view = buildPropValueView(vec_value);
 
     // 1.
     raft::ErrorCode err_code = raft::ErrorCode::OK;
     uint64_t assigned_log_index = 0ull;
-    tie(err_code, assigned_log_index) = raft->Propose(0ull, vec_view);
+    tie(err_code, assigned_log_index) = raft->Propose(0ull, vec_value);
     assert(ErrorCode::OK == err_code);
     assert(1ull == assigned_log_index);
 
@@ -450,13 +443,13 @@ TEST(TestRaftAppendEntries, RepeatAppendTest)
 
     for (int i = 0; i < 100; ++i) {
         auto vec_value = generatePropValue(min(i + 1, 10));
-        auto vec_view = buildPropValueView(vec_value);
+        // auto vec_view = buildPropValueView(vec_value);
 
         updateAllActiveTime(map_raft);
 
         raft::ErrorCode err_code = raft::ErrorCode::OK;
         uint64_t assigned_log_index = 0ull;
-        tie(err_code, assigned_log_index) = raft->Propose(0ull, vec_view);
+        tie(err_code, assigned_log_index) = raft->Propose(0ull, vec_value);
         assert(ErrorCode::OK == err_code);
         assert(0ull < assigned_log_index);
         logdebug("i %d err_code %d vec_value.size %zu "

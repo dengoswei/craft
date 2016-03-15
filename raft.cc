@@ -1,5 +1,6 @@
 #include "raft.h"
 #include "raft_impl.h"
+#include "log.h"
 
 using namespace std;
 
@@ -9,7 +10,7 @@ using namespace raft;
 
 std::unique_ptr<Message> buildPropMsg(
         uint64_t prev_index, 
-        const std::vector<gsl::cstring_view<>>& entries)
+        const std::vector<std::string>& entries)
 {
     auto msg = make_unique<Message>();
     assert(nullptr != msg);
@@ -133,7 +134,7 @@ raft::ErrorCode Raft::Step(const raft::Message& msg)
 std::tuple<raft::ErrorCode, uint64_t>
 Raft::Propose(
         uint64_t prev_index,
-        const std::vector<gsl::cstring_view<>>& entries)
+        const std::vector<std::string>& entries)
 {
     assert(false == entries.empty());
     if (MAX_BATCH_SIZE < entries.size()) {
@@ -205,7 +206,7 @@ Raft::Get(uint64_t index)
 std::tuple<raft::ErrorCode, uint64_t>
 Raft::TrySet(
         uint64_t index, 
-        const std::vector<gsl::cstring_view<>>& entries)
+        const std::vector<std::string>& entries)
 {
     return Propose(index, entries);
 }

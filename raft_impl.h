@@ -9,8 +9,8 @@
 #include <stdint.h>
 #include "utils.h"
 #include "raft.pb.h"
-#include "gsl.h"
 #include "raft_config.h"
+#include "random_utils.h"
 
 
 namespace raft {
@@ -59,32 +59,23 @@ public:
 
     std::unique_ptr<Message> buildMsgApp(
             uint64_t peer_id, uint64_t next_index, size_t max_batch_size);
-//
-//    std::vector<std::unique_ptr<Message>> 
-//        batchBuildMsgAppUpToDate(size_t max_batch_size);
-//
-//    std::vector<std::unique_ptr<Message>> 
-//        batchBuildMsgApp(size_t max_batch_size);
-//
 
     std::unique_ptr<Message> 
         buildMsgHeartbeat(uint64_t peer_id, uint64_t next_index) const;
-//
-//    std::vector<std::unique_ptr<Message>> batchBuildMsgHeartbeat();
 
     bool isUpToDate(
             uint64_t peer_log_term, uint64_t peer_max_index);
 
-    int appendLogs(gsl::array_view<const Entry*> entries);
+    int appendLogs(const std::vector<const Entry*>& entries);
     int appendEntries(
             uint64_t prev_log_index, 
             uint64_t prev_log_term, 
             uint64_t leader_commited_index, 
-            gsl::array_view<const Entry*> entries);
+            const std::vector<const Entry*>& entries);
 
     int checkAndAppendEntries(
             uint64_t prev_log_index, 
-            gsl::array_view<const Entry*> entries);
+            const std::vector<const Entry*>& entries);
 
     std::vector<std::unique_ptr<raft::Entry>>
         getLogEntriesAfter(uint64_t log_index) const;
@@ -97,10 +88,6 @@ public:
 
     std::vector<std::unique_ptr<raft::Entry>>
         getPendingLogEntries() const;
-
-//    bool confirmMajority(
-//            uint64_t major_match_index, 
-//            const std::map<uint64_t, uint64_t>& match_index) const;
 
     // test helper function
     void makeElectionTimeout(
@@ -212,7 +199,7 @@ public:
     void updateFollowerCommitedIndex(uint64_t leader_commited_index);
     bool isMatch(uint64_t log_index, uint64_t log_term) const;
 
-    uint64_t findConflict(gsl::array_view<const Entry*> entries) const;
+    uint64_t findConflict(const std::vector<const Entry*>& entries) const;
     
     bool updateReplicateState(
             uint64_t peer_id, 
@@ -255,7 +242,7 @@ private:
     uint64_t pending_log_idx_ = 0;
     uint64_t pending_log_seq_ = 0;
 
-    RandomTimeout rtimeout_;
+    cutils::RandomTimeout rtimeout_;
     std::chrono::milliseconds election_timeout_;
     std::chrono::time_point<std::chrono::system_clock> active_time_;
 

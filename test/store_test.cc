@@ -3,6 +3,8 @@
 #include "utils.h"
 #include "raft.pb.h"
 #include "test_helper.h"
+#include "log.h"
+#include "hassert.h"
 
 
 using namespace std;
@@ -36,7 +38,7 @@ TEST(TestHardStateStore, Timeout)
     uint64_t logid = LOGID;
     set<uint64_t> group_ids = GROUP_IDS;
 
-    auto map_raft = build_rafts(group_ids, logid, 10, 20);
+    auto map_raft = build_rafts(logid, group_ids, 10, 20);
     assert(map_raft.size() == group_ids.size());
 
     for (auto& id_raft : map_raft) {

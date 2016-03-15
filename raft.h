@@ -6,7 +6,6 @@
 #include <stdint.h>
 #include <functional>
 #include "raft.pb.h"
-#include "gsl.h"
 
 
 namespace raft {
@@ -43,7 +42,7 @@ public:
 
     std::tuple<raft::ErrorCode, uint64_t>
         Propose(uint64_t index, 
-                const std::vector<gsl::cstring_view<>>& vec_view);
+                const std::vector<std::string>& vec_view);
 
     // err_code, commited_index, entry
     std::tuple<raft::ErrorCode, uint64_t, std::unique_ptr<Entry>> 
@@ -52,7 +51,7 @@ public:
     // err_code, log_index
     std::tuple<raft::ErrorCode, uint64_t>
         TrySet(uint64_t index, 
-                const std::vector<gsl::cstring_view<>>& entries);
+                const std::vector<std::string>& entries);
 
     void Wait(uint64_t index);
     bool WaitFor(uint64_t index, const std::chrono::milliseconds timeout);
