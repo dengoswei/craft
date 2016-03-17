@@ -6,7 +6,7 @@ CXXFLAGS += -g -Wall -Wextra -D TEST_DEBUG
 
 TESTS = utils_test leader_election_test \
 		append_entries_test store_test benchmark_test \
-		config_test replicate_test
+		config_test replicate_test raft_test
 
 INCLS += -I../ -I../craftpb 
 INCLS += -I../../cutils
@@ -86,6 +86,9 @@ benchmark_test: LINKS += -L/usr/local/lib
 benchmark_test: LINKS += -lbenchmark -lcraft
 benchmark_test: INCLS += -I/usr/local/include
 benchmark_test: benchmark_test.o test_helper.o
+	$(BUILDEXE)
+
+raft_test: raft_test.o test_helper.o ../libcraft.a gtest_main.a
 	$(BUILDEXE)
 
 %.pb.cc: %.proto

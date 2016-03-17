@@ -99,20 +99,21 @@ public:
     ~StorageHelper();
 
     int write(
-            std::unique_ptr<raft::HardState>&& hs, 
+            std::unique_ptr<raft::RaftState>&& hs, 
             std::vector<std::unique_ptr<raft::Entry>>&& vec_entries);
 
-    std::unique_ptr<raft::Entry> read(uint64_t log_index);
+    std::tuple<int, std::unique_ptr<raft::Entry>>
+        read(uint64_t logid, uint64_t log_index);
 
 private:
-    int write(std::unique_ptr<raft::HardState>&& hs);
+    int write(std::unique_ptr<raft::RaftState>&& hs);
 
     int write(std::vector<std::unique_ptr<raft::Entry>>&& vec_entries);
 
 private:
     std::mutex mutex_;
     uint64_t max_meta_seq_;
-    std::unique_ptr<raft::HardState> meta_info_;
+    std::unique_ptr<raft::RaftState> meta_info_;
 
     uint64_t max_log_seq_;
     std::map<uint64_t, std::unique_ptr<raft::Entry>> log_entries_;

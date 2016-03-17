@@ -6,10 +6,10 @@
 #include "utils.h"
 #include "raft.pb.h"
 #include "test_helper.h"
-#include "log.h"
-#include "random_utils.h"
 #include "hassert.h"
+#include "log_utils.h"
 #include "mem_utils.h"
+#include "random_utils.h"
 
 using namespace raft;
 using namespace std;

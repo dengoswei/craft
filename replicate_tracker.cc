@@ -2,7 +2,7 @@
 #include "replicate_tracker.h"
 #include "raft.pb.h"
 #include "utils.h"
-#include "log.h"
+#include "log_utils.h"
 
 using namespace std;
 

@@ -2,7 +2,7 @@
 #include "raft.pb.h"
 #include "utils.h"
 #include "replicate_tracker.h"
-#include "log.h"
+#include "log_utils.h"
 #include "mem_utils.h"
 
 

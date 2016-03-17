@@ -4,8 +4,8 @@
 #include "utils.h"
 #include "raft.pb.h"
 #include "test_helper.h"
-#include "log.h"
 #include "hassert.h"
+#include "log_utils.h"
 #include "mem_utils.h"
 
 
@@ -68,13 +68,17 @@ std::vector<std::string> generatePropValue(int entries_size)
 
 
 void checkValue(
+        uint64_t logid, 
         uint64_t base_index, 
         const std::vector<std::string>& vec_value, 
         StorageHelper& store)
 {
     auto log_index = base_index;
     for (auto& value : vec_value) {
-        auto entry = store.read(log_index);
+        int err = 0;
+        unique_ptr<raft::Entry> entry = nullptr;
+        tie(err, entry) = store.read(logid, log_index);
+        assert(0 == err);
         hassert(nullptr != entry, "log_index %" PRIu64, log_index);
 
 //        logdebug("index %" PRIu64 " term %" PRIu64 
@@ -92,13 +96,14 @@ void checkValue(
 }
 
 void checkValue(
+        uint64_t logid, 
         uint64_t base_index, 
         const std::vector<std::string>& vec_value, 
         std::map<uint64_t, std::unique_ptr<StorageHelper>>& map_store)
 {
     for (auto& id_store : map_store) {
         assert(nullptr != id_store.second);
-        checkValue(base_index, vec_value, *(id_store.second));
+        checkValue(logid, base_index, vec_value, *(id_store.second));
     }
 }
 
@@ -423,7 +428,7 @@ TEST(TestRaftAppendEntries, SimpleAppendTest)
     assert(true == sender.empty());
 
     // check
-    checkValue(1ull, vec_value, map_store);
+    checkValue(logid, 1ull, vec_value, map_store);
 }
 
 TEST(TestRaftAppendEntries, RepeatAppendTest)
@@ -463,7 +468,7 @@ TEST(TestRaftAppendEntries, RepeatAppendTest)
         assert(true == sender.empty());
  
         // check
-        checkValue(assigned_log_index, vec_value, map_store);
+        checkValue(logid, assigned_log_index, vec_value, map_store);
     }
 }
 

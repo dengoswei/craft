@@ -17,25 +17,35 @@ class RaftImpl;
 
 
 struct RaftCallBack {
-    std::function<std::unique_ptr<raft::Entry>(uint64_t)> read;
+    std::function<std::tuple<
+        int, std::unique_ptr<raft::Entry>>(uint64_t, uint64_t)> read;
 
     std::function<int(
-            std::unique_ptr<raft::HardState>&&, 
-            std::vector<std::unique_ptr<raft::Entry>>&&)> write;
+            std::unique_ptr<raft::RaftState>, 
+            std::vector<std::unique_ptr<raft::Entry>>)> write;
 
     std::function<
-        int(std::vector<std::unique_ptr<raft::Message>>&&)> send;
+        int(std::vector<std::unique_ptr<raft::Message>>)> send;
 };
 
 
 class Raft {
 
 public:
-    Raft(uint64_t logid, uint64_t selfid, 
-            const std::set<uint64_t>& group_ids, 
-            int min_election_timeout, 
-            int max_election_timeout, 
-            RaftCallBack callback);
+    Raft(
+        uint64_t logid, uint64_t selfid, 
+        const std::set<uint64_t>& group_ids, 
+        int min_election_timeout, 
+        int max_election_timeout, 
+        RaftCallBack callback);
+
+    Raft(
+        uint64_t selfid, 
+        int min_election_timeout, 
+        int max_election_timeout, 
+        const SnapshotMetadata& meta, 
+        const RaftState* raft_state, 
+        RaftCallBack callback);
 
     ~Raft();
 
@@ -75,6 +85,14 @@ public:
     raft::ErrorCode MakeTimeoutHeartbeat();
 
     uint64_t GetTerm();
+
+    uint64_t GetCommitedIndex();
+
+    uint64_t GetMaxIndex();
+
+    uint64_t GetVoteFor();
+
+    std::unique_ptr<raft::SnapshotMetadata> CreateSnapshotMetadata();
 
     // only for test
     void ReflashTimer(

@@ -137,12 +137,8 @@ int ApplyConfChange(
     }
 
     // 1.
-    {
-        std::stringstream ss;
-        ss.str(conf_entry.data());
-        if (false == conf_change.ParseFromIstream(&ss)) {
-            return -2;
-        }
+    if (false == conf_change.ParseFromString(conf_entry.data())) {
+        return -2;
     }
 
     raft_config.ApplyConfChange(conf_change, check_pending);
@@ -585,6 +581,90 @@ RaftImpl::RaftImpl(
     assert(0 < election_timeout_.count());
     assert(0 < hb_timeout_.count());
     setRole(RaftRole::FOLLOWER);
+}
+
+RaftImpl::RaftImpl(
+        uint64_t logid, 
+        uint64_t selfid, 
+        const std::set<uint64_t>& peer_ids, 
+        int min_election_timeout, 
+        int max_election_timeout, 
+        const std::deque<std::unique_ptr<Entry>>& entry_queue, 
+        uint64_t commited_index, 
+        const RaftState* raft_state)
+    : logid_(logid)
+    , selfid_(selfid)
+    , current_config_(selfid)
+    , commited_config_(selfid)
+    , rtimeout_(min_election_timeout, max_election_timeout)
+    , election_timeout_(rtimeout_())
+    , active_time_(chrono::system_clock::now())
+    , hb_timeout_(min_election_timeout / 2)
+{
+    assert(0 < min_election_timeout);
+    assert(min_election_timeout < max_election_timeout);
+
+    for (auto id : peer_ids) {
+        ConfChange conf_change;
+        conf_change.set_type(ConfChangeType::ConfChangeAddNode);
+        conf_change.set_node_id(id);
+
+        current_config_.ApplyConfChange(conf_change, false);
+        commited_config_.ApplyConfChange(conf_change, false);
+    }
+
+    assert(false == current_config_.IsPending());
+    assert(false == commited_config_.IsPending());
+
+    assert(0 < election_timeout_.count());
+    assert(0 < hb_timeout_.count());
+    setRole(RaftRole::FOLLOWER);
+
+    uint64_t index = 0;
+    uint64_t max_term = 0;
+    uint64_t max_seq = 0;
+    for (auto& entry : entry_queue) {
+        assert(nullptr != entry);
+        assert(entry->index() > index);
+        assert(entry->index() >= commited_index);
+        index = entry->index();
+        assert(max_term <= entry->term());
+        max_term = entry->term();
+        max_seq = max(max_seq, entry->seq());
+        if (EntryType::EntryConfChange == entry->type()) {
+            applyCommitedConfEntry(*entry);
+            // applyCommitedConfEntry ?
+        }
+
+        logs_.emplace_back(
+                cutils::make_unique<Entry>(*entry));
+        assert(nullptr != logs_.back());
+    }
+
+    assert(entry_queue.empty() == logs_.empty());
+    if (0 != commited_index) {
+        assert(0 != index);
+        assert(nullptr != raft_state);
+        assert(true == isIndexInMem(commited_index));
+    }
+
+    uint64_t vote_for = 0ull;
+    if (nullptr != raft_state) {
+        assert(commited_index >= raft_state->commit());
+        assert(max_term <= raft_state->term());
+        max_term = raft_state->term();
+        vote_for = raft_state->vote();
+        max_seq = max(max_seq, raft_state->seq());
+    }
+
+    if (0 != max_term) {
+        setTerm(max_term);
+    }
+    setVoteFor(true, vote_for);
+    assert(getTerm() == max_term);
+    assert(getVoteFor() == vote_for);
+    commited_index_ = commited_index;
+    store_seq_ = max_seq+1;
 }
 
 RaftImpl::~RaftImpl() = default;
@@ -1310,10 +1390,10 @@ RaftImpl::getLogEntriesAfter(uint64_t log_index) const
     return vec_entries;
 }
 
-std::unique_ptr<raft::HardState>
-RaftImpl::getCurrentHardState() const 
+std::unique_ptr<raft::RaftState>
+RaftImpl::getCurrentRaftState() const 
 {
-    auto hs = cutils::make_unique<HardState>();
+    auto hs = cutils::make_unique<RaftState>();
     assert(nullptr != hs);
     hs->set_term(term_);
     hs->set_vote(vote_for_);
@@ -1590,14 +1670,14 @@ void RaftImpl::makeHeartbeatTimeout(
     updateHeartbeatTime(tp);
 }
 
-std::unique_ptr<raft::HardState>
-RaftImpl::getPendingHardState() const 
+std::unique_ptr<raft::RaftState>
+RaftImpl::getPendingRaftState() const 
 {
     if (0ull == pending_meta_seq_) {
         return nullptr;
     }
 
-    return getCurrentHardState();
+    return getCurrentRaftState();
 }
 
 std::vector<std::unique_ptr<raft::Entry>>
@@ -1647,7 +1727,8 @@ void RaftImpl::assertNoPending() const
 int RaftImpl::applyUnCommitedConfEntry(const Entry& conf_entry)
 {
     ConfChange conf_change;
-    auto ret = ApplyConfChange(conf_entry, true, conf_change, current_config_);
+    auto ret = ApplyConfChange(
+            conf_entry, true, conf_change, current_config_);
     if (0 != ret) {
         return ret;
     }
@@ -1665,7 +1746,8 @@ int RaftImpl::applyUnCommitedConfEntry(const Entry& conf_entry)
 int RaftImpl::applyCommitedConfEntry(const Entry& conf_entry)
 {
     ConfChange conf_change;
-    return ApplyConfChange(conf_entry, false, conf_change, commited_config_);
+    return ApplyConfChange(
+            conf_entry, false, conf_change, commited_config_);
 }
 
 int RaftImpl::reconstructCurrentConfig()

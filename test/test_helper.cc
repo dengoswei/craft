@@ -5,10 +5,9 @@
 #include "raft.h"
 #include "raft.pb.h"
 #include "utils.h"
-#include "log.h"
 #include "time_utils.h"
 #include "mem_utils.h"
-
+#include "log_utils.h"
 
 
 using namespace std;
@@ -213,13 +212,13 @@ build_rafts(
         assert(nullptr != store);
 
         RaftCallBack callback;
-        callback.read = [=](uint64_t log_index) {
+        callback.read = [=](uint64_t logid, uint64_t log_index) {
             assert(nullptr != store);
-            return store->read(log_index);
+            return store->read(logid, log_index);
         };
 
         callback.write = [=](
-                unique_ptr<HardState>&& hs, 
+                unique_ptr<RaftState>&& hs, 
                 vector<unique_ptr<Entry>>&& vec_entries) {
             assert(nullptr != store);
             return store->write(move(hs), move(vec_entries));
@@ -314,7 +313,7 @@ comm_init(
 //        };
 //
 //        callback.write = [=](
-//                unique_ptr<HardState>&& hs, 
+//                unique_ptr<RaftState>&& hs, 
 //                vector<unique_ptr<Entry>>&& vec_entries) {
 //            assert(nullptr != store);
 //            return store->write(move(hs), move(vec_entries));
@@ -345,7 +344,7 @@ comm_init(
 StorageHelper::~StorageHelper() = default;
 
 int StorageHelper::write(
-        std::unique_ptr<raft::HardState>&& hs)
+        std::unique_ptr<raft::RaftState>&& hs)
 {
     // hold lock;
     if (nullptr != hs) {
@@ -386,7 +385,7 @@ int StorageHelper::write(
 }
 
 int StorageHelper::write(
-        std::unique_ptr<raft::HardState>&& hs, 
+        std::unique_ptr<raft::RaftState>&& hs, 
         std::vector<std::unique_ptr<raft::Entry>>&& vec_entries)
 {
     lock_guard<mutex> lock(mutex_);
@@ -398,23 +397,24 @@ int StorageHelper::write(
     return write(move(vec_entries));
 }
 
-std::unique_ptr<raft::Entry> StorageHelper::read(uint64_t log_index)
+std::tuple<int, std::unique_ptr<raft::Entry>>
+StorageHelper::read(uint64_t logid, uint64_t log_index)
 {
     if (0ull == log_index) {
-        return nullptr;
+        return make_tuple(-1, nullptr);
     }
 
     lock_guard<mutex> lock(mutex_);
     if (log_entries_.end() == log_entries_.find(log_index)) {
-        return nullptr;
+        return make_tuple(1, nullptr);
     }
 
     auto& entry = log_entries_[log_index];
     assert(nullptr != entry);
     assert(entry->index() == log_index);
+    return make_tuple(0, cutils::make_unique<Entry>(*entry));
 //    logdebug("seq %" PRIu64 " index %" PRIu64 " term %" PRIu64, 
 //            entry->seq(), entry->index(), entry->term());
-    return cutils::make_unique<Entry>(*entry);
 }
 
 SendHelper::~SendHelper() = default;

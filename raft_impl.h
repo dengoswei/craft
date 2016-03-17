@@ -45,6 +45,16 @@ public:
             int min_election_timeout, 
             int max_election_timeout);
 
+    RaftImpl(
+            uint64_t logid, 
+            uint64_t selfid, 
+            const std::set<uint64_t>& group_ids, 
+            int min_election_timeout, 
+            int max_election_timeout, 
+            const std::deque<std::unique_ptr<Entry>>& entry_queue, 
+            uint64_t commited_index, 
+            const RaftState* raft_state);
+
     ~RaftImpl();
 
     MessageType CheckTerm(uint64_t msg_term);
@@ -80,11 +90,11 @@ public:
     std::vector<std::unique_ptr<raft::Entry>>
         getLogEntriesAfter(uint64_t log_index) const;
 
-    std::unique_ptr<raft::HardState>
-        getCurrentHardState() const;
+    std::unique_ptr<raft::RaftState>
+        getCurrentRaftState() const;
 
-    std::unique_ptr<raft::HardState>
-        getPendingHardState() const;
+    std::unique_ptr<raft::RaftState>
+        getPendingRaftState() const;
 
     std::vector<std::unique_ptr<raft::Entry>>
         getPendingLogEntries() const;
@@ -257,6 +267,7 @@ private:
     std::chrono::time_point<std::chrono::system_clock> hb_time_;
     // TODO:
     // trace peer_ids need log entries not in mem
+    // ?? way out ??
     std::set<uint64_t> ids_not_in_mem_;
 };
 

@@ -1,6 +1,6 @@
 #include "raft.h"
 #include "raft_impl.h"
-#include "log.h"
+#include "log_utils.h"
 #include "mem_utils.h"
 
 using namespace std;
@@ -53,12 +53,108 @@ Raft::Raft(
     assert(nullptr != raft_impl_);
 }
 
+Raft::Raft(
+        uint64_t selfid, 
+        int min_election_timeout, 
+        int max_election_timeout, 
+        const SnapshotMetadata& meta, 
+        const RaftState* raft_state, 
+        RaftCallBack callback)
+    : logid_(meta.logid())
+    , selfid_(selfid)
+    , callback_(callback)
+{
+    assert(nullptr == raft_impl_);
+    assert(nullptr != callback_.read);
+    assert(nullptr != callback_.write);
+
+    std::set<uint64_t> group_ids;
+    {
+        assert(true == meta.has_conf_state());
+        auto& conf_state = meta.conf_state();
+        for (int idx = 0; idx < conf_state.nodes_size(); ++idx) {
+            group_ids.insert(conf_state.nodes(idx));
+        }
+    }
+    assert(false == group_ids.empty());
+    assert(true == meta.has_logid());
+    if (false == meta.has_commited_index()) {
+        assert(nullptr == raft_state);
+        // new raft log
+        raft_impl_ = cutils::make_unique<RaftImpl>(
+                meta.logid(), selfid, group_ids, 
+                min_election_timeout, max_election_timeout);
+        assert(nullptr != raft_impl_);
+        assert(0 == raft_impl_->getCommitedIndex());
+        assert(0 == raft_impl_->getLastLogIndex());
+        assert(0 == raft_impl_->getTerm());
+    }
+    else {
+        assert(true == meta.has_commited_index());
+
+        int err = 0;
+        std::unique_ptr<Entry> entry = nullptr;
+
+        uint64_t commited_index = meta.commited_index();
+        if (nullptr != raft_state) {
+            commited_index = max(commited_index, raft_state->commit());
+        }
+
+        auto index = 0 == commited_index ? 1 : commited_index;
+
+        std::deque<std::unique_ptr<Entry>> entry_deque;
+        uint64_t max_term = 0;
+        for (; true; ++index) {
+            assert(0 == err);
+            assert(nullptr == entry);
+            tie(err, entry) = callback_.read(meta.logid(), index);
+            if (0 != err) {
+                assert(nullptr == entry);
+                assert(1 == err);
+                break;
+            }
+
+            assert(0 == err);
+            assert(nullptr != entry);
+            assert(entry->index() == index);
+            assert(commited_index <= index);
+            assert(entry->term() >= max_term);
+            max_term = max(max_term, entry->term());
+
+            entry_deque.push_back(move(entry));
+            assert(nullptr == entry);
+        }
+
+        assert(index > commited_index);
+        --index;
+        assert(index >= commited_index);
+        assert(0 == max_term || 
+                (nullptr != raft_state && max_term <= raft_state->term()));
+
+        raft_impl_ = cutils::make_unique<RaftImpl>(
+                meta.logid(), selfid, group_ids, 
+                min_election_timeout, max_election_timeout, 
+                entry_deque, commited_index, raft_state);
+        assert(nullptr != raft_impl_);
+        assert(meta.commited_index() <= raft_impl_->getCommitedIndex());
+        assert(index == raft_impl_->getLastLogIndex());
+        assert(max_term <= raft_impl_->getTerm());
+        if (nullptr != raft_state) {
+            assert(raft_state->term() == raft_impl_->getTerm());
+            assert(raft_state->vote() == raft_impl_->getVoteFor());
+            assert(raft_state->commit() <= raft_impl_->getCommitedIndex());
+        }
+    }
+
+    assert(nullptr != raft_impl_);
+}
+
 Raft::~Raft() = default;
 
 
 raft::ErrorCode Raft::Step(const raft::Message& msg)
 {
-    unique_ptr<HardState> hs;
+    unique_ptr<RaftState> hs;
     vector<unique_ptr<Entry>> vec_entries;
     vector<unique_ptr<Message>> vec_rsp;
 
@@ -77,7 +173,7 @@ raft::ErrorCode Raft::Step(const raft::Message& msg)
                 GetSelfId(), static_cast<int>(msg.type()), 
                 static_cast<int>(rsp_msg_type), vec_rsp.size());
 
-        hs = raft_impl_->getPendingHardState();
+        hs = raft_impl_->getPendingRaftState();
         vec_entries = raft_impl_->getPendingLogEntries();
     }
 
@@ -196,11 +292,17 @@ Raft::Get(uint64_t index)
         }
     }
 
-    auto entry = callback_.read(index);
-    if (nullptr == entry) {
+    // auto entry = callback_.read(index);
+    int err = 0;
+    unique_ptr<Entry> entry = nullptr;
+    tie(err, entry) = callback_.read(GetLogId(), index);
+    if (0 != err) {
+        assert(nullptr == entry);
         return make_tuple(raft::ErrorCode::STORAGE_READ_ERROR, 0ull, nullptr);
     }
 
+    assert(0 == err);
+    assert(nullptr != entry);
     return make_tuple(raft::ErrorCode::OK, commited_index, move(entry));
 }
 
@@ -341,6 +443,51 @@ void Raft::ReflashTimer(
     else {
         raft_impl_->updateActiveTime(time_now);
     }
+}
+
+uint64_t Raft::GetCommitedIndex() 
+{
+    lock_guard<mutex> lock(raft_mutex_);
+    assert(nullptr != raft_impl_);
+    return raft_impl_->getCommitedIndex();
+}
+
+uint64_t Raft::GetMaxIndex() 
+{
+    lock_guard<mutex> lock(raft_mutex_);
+    assert(nullptr != raft_impl_);
+    return raft_impl_->getLastLogIndex();
+}
+
+uint64_t Raft::GetVoteFor() 
+{
+    lock_guard<mutex> lock(raft_mutex_);
+    assert(nullptr != raft_impl_);
+    return raft_impl_->getVoteFor();
+}
+
+std::unique_ptr<raft::SnapshotMetadata> 
+Raft::CreateSnapshotMetadata()
+{
+    auto meta = cutils::make_unique<SnapshotMetadata>();
+    assert(nullptr != meta);
+
+    auto conf_state = meta->mutable_conf_state();
+    assert(nullptr != conf_state);
+
+    lock_guard<mutex> lock(raft_mutex_);
+    assert(nullptr != raft_impl_);
+    meta->set_logid(raft_impl_->getLogId());
+    meta->set_commited_index(raft_impl_->getCommitedIndex());
+
+    auto& config = raft_impl_->GetCommitedConfig();
+    for (auto node_id : config.GetReplicateGroup()) {
+        conf_state->add_nodes(node_id);
+    }
+
+    assert(static_cast<size_t>(
+				conf_state->nodes_size()) == config.GetReplicateGroup().size());
+    return meta;
 }
 
 } // namespace raft;

@@ -3,7 +3,7 @@
 #include "utils.h"
 #include "raft.pb.h"
 #include "test_helper.h"
-#include "log.h"
+#include "log_utils.h"
 #include "hassert.h"
 
 
@@ -33,7 +33,7 @@ void ClearPendingStoreSeq(
 } 
 
 
-TEST(TestHardStateStore, Timeout)
+TEST(TestRaftStateStore, Timeout)
 {
     uint64_t logid = LOGID;
     set<uint64_t> group_ids = GROUP_IDS;
@@ -67,7 +67,7 @@ TEST(TestHardStateStore, Timeout)
         assert(0ull == log_idx);
         assert(0ull == log_seq);
 
-        auto hs = raft->getCurrentHardState();
+        auto hs = raft->getCurrentRaftState();
         assert(nullptr != hs);
         assert(0ull < hs->term());
         assert(hs->term() == raft->getTerm());
@@ -98,7 +98,7 @@ TEST(TestHardStateStore, Timeout)
     }
 }
 
-TEST(TestHardStateStore, AppendEntriesBestCase)
+TEST(TestRaftStateStore, AppendEntriesBestCase)
 {
     uint64_t logid = 0ull;
     set<uint64_t> group_ids;
@@ -164,7 +164,7 @@ TEST(TestHardStateStore, AppendEntriesBestCase)
     }
 }
 
-TEST(TestHardStateStore, WhatIfFailedToCommited)
+TEST(TestRaftStateStore, WhatIfFailedToCommited)
 {
     uint64_t logid = 0ull;
     set<uint64_t> group_ids;

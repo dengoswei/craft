@@ -5,6 +5,7 @@
 #include <chrono>
 #include <iostream>
 #include <vector>
+#include <functional>
 #include <cstdio>
 #include <cstdlib>
 #include "utils.h"
